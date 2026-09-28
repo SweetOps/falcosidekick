@@ -1,15 +1,20 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
-	"log"
+	"net/http"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
 type influxdbPayload string
 
-func newInfluxdbPayload(falcopayload types.FalcoPayload, config *types.Configuration) influxdbPayload {
+func newInfluxdbPayload(falcopayload types.FalcoPayload) influxdbPayload {
 	s := "events,rule=" + strings.Replace(falcopayload.Rule, " ", "_", -1) + ",priority=" + falcopayload.Priority.String() + ",source=" + falcopayload.Source
 
 	for i, j := range falcopayload.OutputFields {
@@ -38,20 +43,20 @@ func newInfluxdbPayload(falcopayload types.FalcoPayload, config *types.Configura
 func (c *Client) InfluxdbPost(falcopayload types.FalcoPayload) {
 	c.Stats.Influxdb.Add(Total, 1)
 
-	c.httpClientLock.Lock()
-	defer c.httpClientLock.Unlock()
-	c.AddHeader("Accept", "application/json")
+	err := c.Post(newInfluxdbPayload(falcopayload), func(req *http.Request) {
+		req.Header.Set("Accept", "application/json")
 
-	if c.Config.Influxdb.Token != "" {
-		c.AddHeader("Authorization", "Token "+c.Config.Influxdb.Token)
-	}
-
-	err := c.Post(newInfluxdbPayload(falcopayload, c.Config))
+		if c.Config.Influxdb.Token != "" {
+			req.Header.Set("Authorization", "Token "+c.Config.Influxdb.Token)
+		}
+	})
 	if err != nil {
 		go c.CountMetric(Outputs, 1, []string{"output:influxdb", "status:error"})
 		c.Stats.Influxdb.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "influxdb", "status": Error}).Inc()
-		log.Printf("[ERROR] : InfluxDB - %v\n", err)
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "influxdb"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
@@ -59,4 +64,6 @@ func (c *Client) InfluxdbPost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:influxdb", "status:ok"})
 	c.Stats.Influxdb.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "influxdb", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "influxdb"),
+		attribute.String("status", OK)).Inc()
 }

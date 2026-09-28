@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package main
 
 import (
@@ -27,11 +29,15 @@ func getInitStats() *types.Statistics {
 		Rocketchat:        getOutputNewMap("rocketchat"),
 		Mattermost:        getOutputNewMap("mattermost"),
 		Teams:             getOutputNewMap("teams"),
+		Webex:             getOutputNewMap("webex"),
 		Datadog:           getOutputNewMap("datadog"),
+		DatadogLogs:       getOutputNewMap("datadogLogs"),
 		Discord:           getOutputNewMap("discord"),
 		Alertmanager:      getOutputNewMap("alertmanager"),
 		Elasticsearch:     getOutputNewMap("elasticsearch"),
+		Quickwit:          getOutputNewMap("quickwit"),
 		Loki:              getOutputNewMap("loki"),
+		SumoLogic:         getOutputNewMap("sumologic"),
 		Nats:              getOutputNewMap("nats"),
 		Stan:              getOutputNewMap("stan"),
 		Influxdb:          getOutputNewMap("influxdb"),
@@ -65,6 +71,7 @@ func getInitStats() *types.Statistics {
 		Wavefront:         getOutputNewMap("wavefront"),
 		Fission:           getOutputNewMap("fission"),
 		Grafana:           getOutputNewMap("grafana"),
+		GrafanaOnCall:     getOutputNewMap("grafanaoncall"),
 		YandexS3:          getOutputNewMap("yandexs3"),
 		YandexDataStreams: getOutputNewMap("yandexdatastreams"),
 		Syslog:            getOutputNewMap("syslog"),
@@ -76,6 +83,17 @@ func getInitStats() *types.Statistics {
 		Gotify:            getOutputNewMap("gotify"),
 		TimescaleDB:       getOutputNewMap("timescaledb"),
 		Redis:             getOutputNewMap("redis"),
+		Telegram:          getOutputNewMap("telegram"),
+		N8N:               getOutputNewMap("n8n"),
+		OpenObserve:       getOutputNewMap("openobserve"),
+		Dynatrace:         getOutputNewMap("dynatrace"),
+		OTLPTraces:        getOutputNewMap("otlptraces"),
+		OTLPMetrics:       getOutputNewMap("otlpmetrics"),
+		OTLPLogs:          getOutputNewMap("otlplogs"),
+		Talon:             getOutputNewMap("talon"),
+		Logstash:          getOutputNewMap("logstash"),
+		Splunk:            getOutputNewMap("splunk"),
+		GCPChronicle:      getOutputNewMap("gcpchronicle"),
 	}
 	stats.Falco.Add(outputs.Emergency, 0)
 	stats.Falco.Add(outputs.Alert, 0)

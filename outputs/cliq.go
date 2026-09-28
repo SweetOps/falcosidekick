@@ -1,10 +1,15 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"bytes"
 	"fmt"
-	"log"
+	"net/http"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -14,7 +19,7 @@ import (
 const (
 	tableSlideType = "table"
 	textSlideType  = "text"
-	botName        = "Falco Sidekick"
+	botName        = "Falcosidekick"
 )
 
 // Table slide fields
@@ -75,7 +80,7 @@ func newCliqPayload(falcopayload types.FalcoPayload, config *types.Configuration
 	if config.Cliq.MessageFormatTemplate != nil {
 		buf := &bytes.Buffer{}
 		if err := config.Cliq.MessageFormatTemplate.Execute(buf, falcopayload); err != nil {
-			log.Printf("[ERROR] : Cliq - Error expanding Cliq message %v", err)
+			utils.Log(utils.ErrorLvl, "Cliq", fmt.Sprintf("Error expanding Cliq message: %v", err))
 		} else {
 			payload.Text = buf.String()
 
@@ -162,15 +167,16 @@ func newCliqPayload(falcopayload types.FalcoPayload, config *types.Configuration
 func (c *Client) CliqPost(falcopayload types.FalcoPayload) {
 	c.Stats.Cliq.Add(Total, 1)
 
-	c.httpClientLock.Lock()
-	defer c.httpClientLock.Unlock()
-	c.AddHeader(ContentTypeHeaderKey, "application/json")
-	err := c.Post(newCliqPayload(falcopayload, c.Config))
+	err := c.Post(newCliqPayload(falcopayload, c.Config), func(req *http.Request) {
+		req.Header.Set(ContentTypeHeaderKey, "application/json")
+	})
 	if err != nil {
 		go c.CountMetric(Outputs, 1, []string{"output:cliq", "status:error"})
 		c.Stats.Cliq.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "cliq", "status": Error}).Inc()
-		log.Printf("[ERROR] : Cliq - %v\n", err)
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "cliq"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
@@ -178,4 +184,5 @@ func (c *Client) CliqPost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:cliq", "status:ok"})
 	c.Stats.Cliq.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "cliq", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "cliq"), attribute.String("status", OK)).Inc()
 }

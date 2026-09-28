@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
@@ -6,16 +8,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/embano1/memlog"
 	"github.com/google/uuid"
 	"github.com/xitongsys/parquet-go-source/mem"
 	"github.com/xitongsys/parquet-go/writer"
+	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -201,10 +205,12 @@ func (c *Client) EnqueueSecurityLake(falcopayload types.FalcoPayload) {
 		go c.CountMetric(Outputs, 1, []string{"output:awssecuritylake.", "status:error"})
 		c.Stats.AWSSecurityLake.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "awssecuritylake.", "status": Error}).Inc()
-		log.Printf("[ERROR] : %v SecurityLake. - %v\n", c.OutputType, err)
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "awssecuritylake"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType+" SecurityLake", err.Error())
 		return
 	}
-	log.Printf("[INFO]  : %v SecurityLake. - Event queued (%v)\n", c.OutputType, falcopayload.UUID)
+	utils.Log(utils.InfoLvl, c.OutputType+" SecurityLake", fmt.Sprintf("Event queued (%v)", falcopayload.UUID))
 	*c.Config.AWS.SecurityLake.WriteOffset = offset
 }
 
@@ -215,7 +221,7 @@ func (c *Client) StartSecurityLakeWorker() {
 			continue
 		}
 
-		time.Sleep(time.Duration(c.Config.AWS.SecurityLake.Interval) * time.Minute)
+		time.Sleep(time.Duration(c.Config.AWS.SecurityLake.Interval) * time.Minute) //nolint:gosec // disable G115
 	}
 }
 
@@ -231,7 +237,9 @@ func (c *Client) processNextBatch() error {
 			go c.CountMetric(Outputs, 1, []string{"output:awssecuritylake.", "status:error"})
 			c.Stats.AWSSecurityLake.Add(Error, 1)
 			c.PromStats.Outputs.With(map[string]string{"destination": "awssecuritylake.", "status": Error}).Inc()
-			log.Printf("[ERROR] : %v SecurityLake. - %v\n", c.OutputType, err)
+			c.OTLPMetrics.Outputs.With(attribute.String("destination", "awssecuritylake"),
+				attribute.String("status", Error)).Inc()
+			utils.Log(utils.ErrorLvl, c.OutputType+" SecurityLake", err.Error())
 			// ctx currently not handled in main
 			// https://github.com/falcosecurity/falcosidekick/pull/390#discussion_r1081690326
 			return err
@@ -243,6 +251,8 @@ func (c *Client) processNextBatch() error {
 			go c.CountMetric(Outputs, 1, []string{"output:awssecuritylake.", "status:error"})
 			c.Stats.AWSSecurityLake.Add(Error, 1)
 			c.PromStats.Outputs.With(map[string]string{"destination": "awssecuritylake.", "status": Error}).Inc()
+			c.OTLPMetrics.Outputs.With(attribute.String("destination", "awssecuritylake"),
+				attribute.String("status", Error)).Inc()
 
 			earliest = earliest - 1 // to ensure next batch includes earliest as we read from ReadOffset+1
 			msg := fmt.Errorf("slow batch reader: resetting read offset from %d to %d: %v",
@@ -250,7 +260,7 @@ func (c *Client) processNextBatch() error {
 				earliest,
 				err,
 			)
-			log.Printf("[ERROR] : %v SecurityLake. - %v\n", c.OutputType, msg)
+			utils.Log(utils.ErrorLvl, c.OutputType+" SecurityLake", msg.Error())
 			awslake.ReadOffset = &earliest
 			return err
 		}
@@ -260,7 +270,9 @@ func (c *Client) processNextBatch() error {
 			go c.CountMetric(Outputs, 1, []string{"output:awssecuritylake.", "status:error"})
 			c.Stats.AWSSecurityLake.Add(Error, 1)
 			c.PromStats.Outputs.With(map[string]string{"destination": "awssecuritylake.", "status": Error}).Inc()
-			log.Printf("[ERROR] : %v SecurityLake. - %v\n", c.OutputType, err)
+			c.OTLPMetrics.Outputs.With(attribute.String("destination", "awssecuritylake"),
+				attribute.String("status", Error)).Inc()
+			utils.Log(utils.ErrorLvl, c.OutputType+" SecurityLake", err.Error())
 			return err
 		}
 	}
@@ -272,6 +284,8 @@ func (c *Client) processNextBatch() error {
 			go c.CountMetric(Outputs, 1, []string{"output:awssecuritylake.", "status:error"})
 			c.Stats.AWSSecurityLake.Add(Error, 1)
 			c.PromStats.Outputs.With(map[string]string{"destination": "awssecuritylake.", "status": Error}).Inc()
+			c.OTLPMetrics.Outputs.With(attribute.String("destination", "awssecuritylake"),
+				attribute.String("status", Error)).Inc()
 			// we don't update ReadOffset to retry and not skip records
 			return err
 		}
@@ -279,6 +293,8 @@ func (c *Client) processNextBatch() error {
 		go c.CountMetric(Outputs, 1, []string{"output:awssecuritylake.", "status:ok"})
 		c.Stats.AWSSecurityLake.Add(OK, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "awssecuritylake.", "status": "ok"}).Inc()
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "awssecuritylake"),
+			attribute.String("status", OK)).Inc()
 
 		// update offset
 		*awslake.ReadOffset = batch[count-1].Metadata.Offset
@@ -290,53 +306,54 @@ func (c *Client) processNextBatch() error {
 func (c *Client) writeParquet(uid string, records []memlog.Record) error {
 	fw, err := mem.NewMemFileWriter(uid+".parquet", func(name string, r io.Reader) error {
 		t := time.Now()
-		key := fmt.Sprintf("/%s/region=%s/accountId=%s/eventHour=%s/%s.parquet", c.Config.AWS.SecurityLake.Prefix, c.Config.AWS.SecurityLake.Region, c.Config.AWS.SecurityLake.AccountID, t.Format("2006010215"), uid)
+		key := fmt.Sprintf("/%s/region=%s/accountId=%s/eventDay=%s/%s.parquet", c.Config.AWS.SecurityLake.Prefix, c.Config.AWS.SecurityLake.Region, c.Config.AWS.SecurityLake.AccountID, t.Format("20060102"), uid)
 		ctx, cancelFn := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancelFn()
-		resp, err := s3.New(c.AWSSession).PutObjectWithContext(ctx, &s3.PutObjectInput{
+
+		resp, err := s3.NewFromConfig(*c.AWSConfig).PutObject(ctx, &s3.PutObjectInput{
 			Bucket:      aws.String(c.Config.AWS.SecurityLake.Bucket),
 			Key:         aws.String(key),
-			Body:        aws.ReadSeekCloser(r),
+			Body:        r,
 			ContentType: aws.String("Apache Parquet"),
-			ACL:         aws.String(s3.ObjectCannedACLBucketOwnerFullControl),
+			ACL:         s3types.ObjectCannedACLBucketOwnerFullControl,
 		})
 		if err != nil {
-			log.Printf("[ERROR] : %v SecurityLake. - Upload parquet file %s.parquet Failed: %v\n", c.OutputType, uid, err)
+			utils.Log(utils.ErrorLvl, c.OutputType+" SecurityLake", fmt.Sprintf("Upload parquet file %s.parquet Failed: %v", uid, err))
 			return err
 		}
 		if resp.SSECustomerAlgorithm != nil {
-			log.Printf("[INFO]  : %v SecurityLake. - Upload parquet file %s.parquet OK (%v) (%v events) \n", c.OutputType, uid, *resp.SSECustomerKeyMD5, len(records))
+			utils.Log(utils.InfoLvl, c.OutputType+" SecurityLake", fmt.Sprintf("Upload parquet file %s.parquet OK (%v) (%v events)", uid, *resp.SSECustomerKeyMD5, len(records)))
 		} else {
-			log.Printf("[INFO]  : %v SecurityLake. - Upload parquet file %s.parquet OK (%v events)\n", c.OutputType, uid, len(records))
+			utils.Log(utils.InfoLvl, c.OutputType+" SecurityLake", fmt.Sprintf("Upload parquet file %s.parquet OK (%v events)\n", uid, len(records)))
 		}
 		return nil
 	})
 	if err != nil {
-		log.Printf("[ERROR] : %v SecurityLake. - Can't create the parquet file %s.parquet: %v\n", c.OutputType, uid, err)
+		utils.Log(utils.ErrorLvl, c.OutputType+" SecurityLake", fmt.Sprintf("Can't create the parquet file %s.parquet: %v", uid, err))
 		return err
 	}
 	pw, err := writer.NewParquetWriter(fw, new(OCSFSecurityFinding), 10)
 	if err != nil {
-		log.Printf("[ERROR] : %v SecurityLake. - Can't create the parquet writer: %v\n", c.OutputType, err)
+		utils.Log(utils.ErrorLvl, c.OutputType+" SecurityLake", fmt.Sprintf("Can't create the parquet writer: %v", err))
 		return err
 	}
 	for _, i := range records {
 		var f types.FalcoPayload
 		if err := json.Unmarshal(i.Data, &f); err != nil {
-			log.Printf("[ERROR] : %v SecurityLake. - Unmarshalling error: %v\n", c.OutputType, err)
+			utils.Log(utils.ErrorLvl, c.OutputType+" SecurityLake", fmt.Sprintf("Unmarshalling error: %v", err))
 			continue
 		}
 		o := NewOCSFSecurityFinding(f)
 		if err = pw.Write(o); err != nil {
-			log.Printf("[ERROR] : %v SecurityLake. - Parquet writer error: %v\n", c.OutputType, err)
+			utils.Log(utils.ErrorLvl, c.OutputType+" SecurityLake", fmt.Sprintf("Parquet writer error: %v", err))
 			continue
 		}
 	}
 	if err = pw.WriteStop(); err != nil {
-		log.Printf("[ERROR] : %v SecurityLake. - Can't stop the parquet writer: %v\n", c.OutputType, err)
+		utils.Log(utils.ErrorLvl, c.OutputType+" SecurityLake", fmt.Sprintf("Can't stop the parquet writer: %v", err))
 	}
 	if err = fw.Close(); err != nil {
-		log.Printf("[ERROR] : %v SecurityLake. - Can't close the parquet file %s.parquet: %v\n", c.OutputType, uid, err)
+		utils.Log(utils.ErrorLvl, c.OutputType+" SecurityLake", fmt.Sprintf("Can't close the parquet file %s.parquet: %v", uid, err))
 		return err
 	}
 	return nil

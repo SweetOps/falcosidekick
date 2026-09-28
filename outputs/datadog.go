@@ -1,8 +1,14 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
-	"log"
+	"fmt"
+	"sort"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -21,21 +27,19 @@ type datadogPayload struct {
 
 func newDatadogPayload(falcopayload types.FalcoPayload) datadogPayload {
 	var d datadogPayload
-	var tags []string
+	tags := make([]string, 0)
 
-	for i, j := range falcopayload.OutputFields {
-		switch v := j.(type) {
-		case string:
-			tags = append(tags, i+":"+v)
-		default:
-			continue
-		}
+	for _, i := range getSortedStringKeys(falcopayload.OutputFields) {
+		tags = append(tags, fmt.Sprintf("%v:%v", i, falcopayload.OutputFields[i]))
+
 	}
-	tags = append(tags, "source:"+falcopayload.Source)
+	tags = append(tags, "source:"+falcopayload.Source, "source:falco")
 	if falcopayload.Hostname != "" {
 		tags = append(tags, Hostname+":"+falcopayload.Hostname)
 	}
+
 	if len(falcopayload.Tags) != 0 {
+		sort.Strings(falcopayload.Tags)
 		tags = append(tags, falcopayload.Tags...)
 	}
 	d.Tags = tags
@@ -67,11 +71,15 @@ func (c *Client) DatadogPost(falcopayload types.FalcoPayload) {
 		go c.CountMetric(Outputs, 1, []string{"output:datadog", "status:error"})
 		c.Stats.Datadog.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "datadog", "status": Error}).Inc()
-		log.Printf("[ERROR] : Datadog - %v\n", err)
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "datadog"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
 	go c.CountMetric(Outputs, 1, []string{"output:datadog", "status:ok"})
 	c.Stats.Datadog.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "datadog", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "datadog"),
+		attribute.String("status", OK)).Inc()
 }

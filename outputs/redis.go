@@ -1,38 +1,97 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
-	"log"
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/DataDog/datadog-go/statsd"
-	"github.com/falcosecurity/falcosidekick/types"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
+	otlpmetrics "github.com/falcosecurity/falcosidekick/outputs/otlp_metrics"
+	"github.com/falcosecurity/falcosidekick/types"
 )
 
 func (c *Client) ReportError(err error) {
 	go c.CountMetric(Outputs, 1, []string{"output:redis", "status:error"})
 	c.Stats.Redis.Add(Error, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "redis", "status": Error}).Inc()
-	log.Printf("[ERROR] : Redis - %v\n", err)
-	return
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "redis"),
+		attribute.String("status", Error)).Inc()
+	utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 }
 
 func NewRedisClient(config *types.Configuration, stats *types.Statistics, promStats *types.PromStatistics,
-	statsdClient, dogstatsdClient *statsd.Client) (*Client, error) {
+	otlpMetrics *otlpmetrics.OTLPMetrics, statsdClient, dogstatsdClient *statsd.Client) (*Client, error) {
+
+	var tlsCfg *tls.Config
+
+	if config.Redis.MutualTLS {
+		certFile := firstValid([]string{config.Redis.CertFile, config.MutualTLSClient.CertFile, config.MutualTLSFilesPath + "/client.crt"})
+		keyFile := firstValid([]string{config.Redis.KeyFile, config.MutualTLSClient.KeyFile, config.MutualTLSFilesPath + "/client.key"})
+		caCertFile := firstValid([]string{config.Redis.CaCertFile, config.MutualTLSClient.CaCertFile, config.MutualTLSFilesPath + "/ca.crt"})
+
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			err = fmt.Errorf("failed to load Redis TLS certificate: %w", err)
+			utils.Log(utils.ErrorLvl, "Redis", err.Error())
+			return nil, err
+		}
+
+		caCert, err := os.ReadFile(caCertFile)
+		if err != nil {
+			err = fmt.Errorf("failed to load Redis CA certificate: %w", err)
+			utils.Log(utils.ErrorLvl, "Redis", err.Error())
+			return nil, err
+		}
+
+		pool, err := x509.SystemCertPool()
+		if err != nil {
+			pool = x509.NewCertPool()
+		}
+
+		tlsCfg = &tls.Config{
+			MinVersion:   tls.VersionTLS12,
+			Certificates: []tls.Certificate{cert},
+			RootCAs:      pool,
+		}
+		tlsCfg.RootCAs.AppendCertsFromPEM(caCert)
+	} else if config.Redis.TLS {
+		if !config.Redis.CheckCert {
+			tlsCfg = utils.InsecureSkipVerifyTLSConfig()
+		} else {
+			pool, err := x509.SystemCertPool()
+			if err != nil {
+				pool = x509.NewCertPool()
+			}
+			tlsCfg = &tls.Config{
+				MinVersion: tls.VersionTLS12,
+				RootCAs:    pool,
+			}
+		}
+	}
 
 	rClient := redis.NewClient(&redis.Options{
-		Addr:     config.Redis.Address,
-		Password: config.Redis.Password,
-		DB:       config.Redis.Database,
+		Addr:      config.Redis.Address,
+		Username:  config.Redis.Username,
+		Password:  config.Redis.Password,
+		DB:        config.Redis.Database,
+		TLSConfig: tlsCfg,
 	})
 	// Ping the Redis server to check if it's running
 	pong, err := rClient.Ping(context.Background()).Result()
 	if err != nil {
-		log.Printf("[ERROR] : Redis - Misconfiguration, cannot connect to the server %v\n", err)
+		utils.Log(utils.ErrorLvl, "Redis", fmt.Sprintf("Misconfiguration, cannot connect to the server: %v", err))
 	}
-	log.Printf("[INFO] : Redis - Connected to redis server: %v\n", pong)
+	utils.Log(utils.InfoLvl, "Redis", fmt.Sprintf("Connected to redis server: %v", pong))
 
 	return &Client{
 		OutputType:      "Redis",
@@ -40,6 +99,7 @@ func NewRedisClient(config *types.Configuration, stats *types.Statistics, promSt
 		RedisClient:     rClient,
 		Stats:           stats,
 		PromStats:       promStats,
+		OTLPMetrics:     otlpMetrics,
 		StatsdClient:    statsdClient,
 		DogstatsdClient: dogstatsdClient,
 	}, nil
@@ -64,4 +124,5 @@ func (c *Client) RedisPost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:redis", "status:ok"})
 	c.Stats.Redis.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "redis", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "redis"), attribute.String("status", OK)).Inc()
 }

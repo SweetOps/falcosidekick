@@ -1,10 +1,13 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"strings"
 	"time"
@@ -13,12 +16,16 @@ import (
 	"github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl/plain"
 	"github.com/segmentio/kafka-go/sasl/scram"
+	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
+	otlpmetrics "github.com/falcosecurity/falcosidekick/outputs/otlp_metrics"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
 // NewKafkaClient returns a new output.Client for accessing the Apache Kafka.
-func NewKafkaClient(config *types.Configuration, stats *types.Statistics, promStats *types.PromStatistics, statsdClient, dogstatsdClient *statsd.Client) (*Client, error) {
+func NewKafkaClient(config *types.Configuration, stats *types.Statistics, promStats *types.PromStatistics,
+	otlpMetrics *otlpmetrics.OTLPMetrics, statsdClient, dogstatsdClient *statsd.Client) (*Client, error) {
 
 	transport := &kafka.Transport{
 		Dial: (&net.Dialer{
@@ -26,6 +33,19 @@ func NewKafkaClient(config *types.Configuration, stats *types.Statistics, promSt
 			DualStack: true,
 		}).DialContext,
 		ClientID: config.Kafka.ClientID,
+	}
+
+	if config.Kafka.TLS {
+		caCertPool, err := x509.SystemCertPool()
+
+		if err != nil {
+			utils.Log(utils.ErrorLvl, "Kafka", fmt.Sprintf("failed to initialize root CAs: %v", err))
+		}
+
+		transport.TLS = &tls.Config{
+			RootCAs:    caCertPool,
+			MinVersion: tls.VersionTLS12,
+		}
 	}
 
 	var err error
@@ -56,15 +76,16 @@ func NewKafkaClient(config *types.Configuration, stats *types.Statistics, promSt
 		}
 	}
 	if err != nil {
-		log.Printf("[ERROR] : Kafka - %v\n", err)
+		utils.Log(utils.ErrorLvl, "Kafka", err.Error())
 		return nil, err
 	}
 
 	kafkaWriter := &kafka.Writer{
-		Addr:      kafka.TCP(config.Kafka.HostPort),
-		Topic:     config.Kafka.Topic,
-		Async:     config.Kafka.Async,
-		Transport: transport,
+		Addr:                   kafka.TCP(strings.Split(config.Kafka.HostPort, ",")...),
+		Topic:                  config.Kafka.Topic,
+		Async:                  config.Kafka.Async,
+		Transport:              transport,
+		AllowAutoTopicCreation: config.Kafka.TopicCreation,
 	}
 
 	switch strings.ToLower(config.Kafka.Balancer) {
@@ -81,6 +102,7 @@ func NewKafkaClient(config *types.Configuration, stats *types.Statistics, promSt
 	case "round_robin":
 		kafkaWriter.Balancer = &kafka.RoundRobin{}
 	default:
+		utils.Log(utils.ErrorLvl, "Kafka", fmt.Sprintf("unsupported balancer %q", config.Kafka.Balancer))
 		return nil, fmt.Errorf("unsupported balancer %q", config.Kafka.Balancer)
 	}
 
@@ -96,6 +118,7 @@ func NewKafkaClient(config *types.Configuration, stats *types.Statistics, promSt
 	case "NONE":
 		// leave as default, none
 	default:
+		utils.Log(utils.ErrorLvl, "Kafka", fmt.Sprintf("unsupported compression %q", config.Kafka.Compression))
 		return nil, fmt.Errorf("unsupported compression %q", config.Kafka.Compression)
 	}
 
@@ -107,7 +130,8 @@ func NewKafkaClient(config *types.Configuration, stats *types.Statistics, promSt
 	case "NONE":
 		kafkaWriter.RequiredAcks = kafka.RequireNone
 	default:
-		return nil, fmt.Errorf("unsupported required ACKs %q", config.Kafka.Compression)
+		utils.Log(utils.ErrorLvl, "Kafka", fmt.Sprintf("unsupported required ACKs %q", config.Kafka.RequiredACKs))
+		return nil, fmt.Errorf("unsupported required ACKs %q", config.Kafka.RequiredACKs)
 	}
 
 	client := &Client{
@@ -115,6 +139,7 @@ func NewKafkaClient(config *types.Configuration, stats *types.Statistics, promSt
 		Config:          config,
 		Stats:           stats,
 		PromStats:       promStats,
+		OTLPMetrics:     otlpMetrics,
 		StatsdClient:    statsdClient,
 		DogstatsdClient: dogstatsdClient,
 		KafkaProducer:   kafkaWriter,
@@ -130,7 +155,7 @@ func (c *Client) KafkaProduce(falcopayload types.FalcoPayload) {
 	falcoMsg, err := json.Marshal(falcopayload)
 	if err != nil {
 		c.incrKafkaErrorMetrics(1)
-		log.Printf("[ERROR] : Kafka - %v - %v\n", "failed to marshalling message", err.Error())
+		utils.Log(utils.ErrorLvl, c.OutputType, fmt.Sprintf("failed to marshalling message: %v", err))
 		return
 	}
 
@@ -139,17 +164,25 @@ func (c *Client) KafkaProduce(falcopayload types.FalcoPayload) {
 	}
 
 	// Errors are logged/captured via handleKafkaCompletion function, ignore here
-	_ = c.KafkaProducer.WriteMessages(context.Background(), kafkaMsg)
+	err = c.KafkaProducer.WriteMessages(context.Background(), kafkaMsg)
+	if err != nil {
+		c.incrKafkaErrorMetrics(1)
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
+		return
+	} else {
+		c.incrKafkaSuccessMetrics(1)
+		utils.Log(utils.InfoLvl, c.OutputType, "Publish OK")
+	}
 }
 
 // handleKafkaCompletion is called when a message is produced
 func (c *Client) handleKafkaCompletion(messages []kafka.Message, err error) {
 	if err != nil {
 		c.incrKafkaErrorMetrics(len(messages))
-		log.Printf("[ERROR] : Kafka (%d) - %v\n", len(messages), err)
+		utils.Log(utils.ErrorLvl, c.OutputType, fmt.Sprintf("(%d)  %v", len(messages), err))
 	} else {
 		c.incrKafkaSuccessMetrics(len(messages))
-		log.Printf("[INFO]  : Kafka (%d) - Publish OK\n", len(messages))
+		utils.Log(utils.InfoLvl, c.OutputType, fmt.Sprintf("(%d) - Publish OK", len(messages)))
 	}
 }
 
@@ -158,6 +191,8 @@ func (c *Client) incrKafkaSuccessMetrics(add int) {
 	go c.CountMetric("outputs", int64(add), []string{"output:kafka", "status:ok"})
 	c.Stats.Kafka.Add(OK, int64(add))
 	c.PromStats.Outputs.With(map[string]string{"destination": "kafka", "status": OK}).Add(float64(add))
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "kafka"),
+		attribute.String("status", OK)).Inc()
 }
 
 // incrKafkaErrorMetrics increments the error stats
@@ -165,4 +200,6 @@ func (c *Client) incrKafkaErrorMetrics(add int) {
 	go c.CountMetric(Outputs, int64(add), []string{"output:kafka", "status:error"})
 	c.Stats.Kafka.Add(Error, int64(add))
 	c.PromStats.Outputs.With(map[string]string{"destination": "kafka", "status": Error}).Add(float64(add))
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "kafka"),
+		attribute.String("status", Error)).Inc()
 }

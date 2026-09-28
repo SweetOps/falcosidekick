@@ -1,17 +1,22 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"bytes"
-	"log"
+	"fmt"
+	"sort"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
 func newMattermostPayload(falcopayload types.FalcoPayload, config *types.Configuration) slackPayload {
 	var (
 		messageText string
-		attachments []slackAttachment
 		attachment  slackAttachment
 		fields      []slackAttachmentField
 		field       slackAttachmentField
@@ -37,6 +42,7 @@ func newMattermostPayload(falcopayload types.FalcoPayload, config *types.Configu
 		field.Short = true
 		fields = append(fields, field)
 		if len(falcopayload.Tags) != 0 {
+			sort.Strings(falcopayload.Tags)
 			field.Title = Tags
 			field.Value = strings.Join(falcopayload.Tags, ", ")
 			field.Short = true
@@ -74,7 +80,7 @@ func newMattermostPayload(falcopayload types.FalcoPayload, config *types.Configu
 	if config.Mattermost.MessageFormatTemplate != nil {
 		buf := &bytes.Buffer{}
 		if err := config.Mattermost.MessageFormatTemplate.Execute(buf, falcopayload); err != nil {
-			log.Printf("[ERROR] : Mattermost - Error expanding Mattermost message %v", err)
+			utils.Log(utils.ErrorLvl, "Mattermost", fmt.Sprintf("Error expanding Mattermost message %v", err))
 		} else {
 			messageText = buf.String()
 		}
@@ -101,8 +107,6 @@ func newMattermostPayload(falcopayload types.FalcoPayload, config *types.Configu
 	}
 	attachment.Color = color
 
-	attachments = append(attachments, attachment)
-
 	iconURL := DefaultIconURL
 	if config.Mattermost.Icon != "" {
 		iconURL = config.Mattermost.Icon
@@ -110,9 +114,9 @@ func newMattermostPayload(falcopayload types.FalcoPayload, config *types.Configu
 
 	s := slackPayload{
 		Text:        messageText,
-		Username:    "Falcosidekick",
+		Username:    config.Mattermost.Username,
 		IconURL:     iconURL,
-		Attachments: attachments,
+		Attachments: []slackAttachment{attachment},
 	}
 
 	return s
@@ -127,7 +131,9 @@ func (c *Client) MattermostPost(falcopayload types.FalcoPayload) {
 		go c.CountMetric(Outputs, 1, []string{"output:mattermost", "status:error"})
 		c.Stats.Mattermost.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "mattermost", "status": Error}).Inc()
-		log.Printf("[ERROR] : Mattermost - %v\n", err)
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "mattermost"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
@@ -135,4 +141,6 @@ func (c *Client) MattermostPost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:mattermost", "status:ok"})
 	c.Stats.Mattermost.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "mattermost", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "mattermost"),
+		attribute.String("status", OK)).Inc()
 }

@@ -1,9 +1,13 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
-	"fmt"
-	"log"
+	"net/http"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -11,17 +15,14 @@ import (
 func (c *Client) ZincsearchPost(falcopayload types.FalcoPayload) {
 	c.Stats.Zincsearch.Add(Total, 1)
 
-	if c.Config.Zincsearch.Username != "" && c.Config.Zincsearch.Password != "" {
-		c.httpClientLock.Lock()
-		defer c.httpClientLock.Unlock()
-		c.BasicAuth(c.Config.Zincsearch.Username, c.Config.Zincsearch.Password)
-	}
-
-	fmt.Println(c.EndpointURL)
-	err := c.Post(falcopayload)
+	err := c.Post(falcopayload, func(req *http.Request) {
+		if c.Config.Zincsearch.Username != "" && c.Config.Zincsearch.Password != "" {
+			req.SetBasicAuth(c.Config.Zincsearch.Username, c.Config.Zincsearch.Password)
+		}
+	})
 	if err != nil {
 		c.setZincsearchErrorMetrics()
-		log.Printf("[ERROR] : Zincsearch - %v\n", err)
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
@@ -29,6 +30,8 @@ func (c *Client) ZincsearchPost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:zincsearch", "status:ok"})
 	c.Stats.Zincsearch.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "zincsearch", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "zincsearch"),
+		attribute.String("status", OK)).Inc()
 }
 
 // setZincsearchErrorMetrics set the error stats
@@ -36,4 +39,6 @@ func (c *Client) setZincsearchErrorMetrics() {
 	go c.CountMetric(Outputs, 1, []string{"output:zincsearch", "status:error"})
 	c.Stats.Zincsearch.Add(Error, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "zincsearch", "status": Error}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "zincsearch"),
+		attribute.String("status", Error)).Inc()
 }

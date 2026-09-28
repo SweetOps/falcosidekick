@@ -1,8 +1,13 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
-	"log"
+	"net/http"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -10,18 +15,18 @@ import (
 func (c *Client) CloudRunFunctionPost(falcopayload types.FalcoPayload) {
 	c.Stats.GCPCloudRun.Add(Total, 1)
 
-	if c.Config.GCP.CloudRun.JWT != "" {
-		c.httpClientLock.Lock()
-		defer c.httpClientLock.Unlock()
-		c.AddHeader(AuthorizationHeaderKey, "Bearer "+c.Config.GCP.CloudRun.JWT)
-	}
-
-	err := c.Post(falcopayload)
+	err := c.Post(falcopayload, func(req *http.Request) {
+		if c.Config.GCP.CloudRun.JWT != "" {
+			req.Header.Set(AuthorizationHeaderKey, Bearer+" "+c.Config.GCP.CloudRun.JWT)
+		}
+	})
 	if err != nil {
 		go c.CountMetric(Outputs, 1, []string{"output:gcpcloudrun", "status:error"})
 		c.Stats.GCPCloudRun.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "gcpcloudrun", "status": Error}).Inc()
-		log.Printf("[ERROR] : GCPCloudRun - %v\n", err.Error())
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "gcpcloudrun"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType+"CloudRun", err.Error())
 		return
 	}
 
@@ -29,4 +34,6 @@ func (c *Client) CloudRunFunctionPost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:gcpcloudrun", "status:ok"})
 	c.Stats.GCPCloudRun.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "gcpcloudrun", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "gcpcloudrun"),
+		attribute.String("status", OK)).Inc()
 }

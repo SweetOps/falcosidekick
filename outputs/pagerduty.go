@@ -1,13 +1,23 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
-	"log"
+	"context"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/PagerDuty/go-pagerduty"
+	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
+)
+
+const (
+	USEndpoint string = "https://events.pagerduty.com"
+	EUEndpoint string = "https://events.eu.pagerduty.com"
 )
 
 // PagerdutyPost posts alert event to Pagerduty
@@ -16,18 +26,28 @@ func (c *Client) PagerdutyPost(falcopayload types.FalcoPayload) {
 
 	event := createPagerdutyEvent(falcopayload, c.Config.Pagerduty)
 
-	if _, err := pagerduty.ManageEvent(event); err != nil {
+	if strings.ToLower(c.Config.Pagerduty.Region) == "eu" {
+		pagerduty.WithV2EventsAPIEndpoint(EUEndpoint)
+	} else {
+		pagerduty.WithV2EventsAPIEndpoint(USEndpoint)
+	}
+
+	if _, err := pagerduty.ManageEventWithContext(context.Background(), event); err != nil {
 		go c.CountMetric(Outputs, 1, []string{"output:pagerduty", "status:error"})
 		c.Stats.Pagerduty.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "pagerduty", "status": Error}).Inc()
-		log.Printf("[ERROR] : PagerDuty - %v\n", err)
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "pagerduty"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
 	go c.CountMetric(Outputs, 1, []string{"output:pagerduty", "status:ok"})
 	c.Stats.Pagerduty.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "pagerduty", "status": OK}).Inc()
-	log.Printf("[INFO]  : Pagerduty - Create Incident OK\n")
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "pagerduty"),
+		attribute.String("status", OK)).Inc()
+	utils.Log(utils.InfoLvl, c.OutputType, "Create Incident OK")
 }
 
 func createPagerdutyEvent(falcopayload types.FalcoPayload, config types.PagerdutyConfig) pagerduty.V2Event {
@@ -39,6 +59,7 @@ func createPagerdutyEvent(falcopayload types.FalcoPayload, config types.Pagerdut
 		falcopayload.OutputFields[Hostname] = falcopayload.Hostname
 	}
 	if len(falcopayload.Tags) != 0 {
+		sort.Strings(falcopayload.Tags)
 		details["tags"] = strings.Join(falcopayload.Tags, ", ")
 	}
 	event := pagerduty.V2Event{

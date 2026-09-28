@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
@@ -14,7 +16,7 @@ func TestNewCliqPayload(t *testing.T) {
 	expectedOutput := cliqPayload{
 		Text: "\U000026AA Rule: Test rule Priority: Debug",
 		Bot: cliqBot{
-			Name:  "Falco Sidekick",
+			Name:  "Falcosidekick",
 			Image: DefaultIconURL,
 		},
 		Slides: []cliqSlide{

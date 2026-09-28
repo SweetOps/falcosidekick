@@ -1,9 +1,10 @@
-ARG BASE_IMAGE=alpine:3.15
+ARG BASE_IMAGE=alpine:3.22
 # Final Docker image
 FROM ${BASE_IMAGE} AS final-stage
-LABEL MAINTAINER "Thomas Labarussias <issif+falcosidekick@gadz.org>"
+LABEL MAINTAINER="Falco Maintainers"
+ARG TARGETPLATFORM
 
-RUN apk add --update --no-cache ca-certificates
+RUN apk add --update --no-cache ca-certificates gcompat
 
 # Create user falcosidekick
 RUN addgroup -S falcosidekick && adduser -u 1234 -S falcosidekick -G falcosidekick
@@ -13,7 +14,7 @@ USER 1234
 
 WORKDIR ${HOME}/app
 COPY LICENSE .
-COPY falcosidekick .
+COPY $TARGETPLATFORM/falcosidekick .
 
 EXPOSE 2801
 

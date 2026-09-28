@@ -1,16 +1,22 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"fmt"
+	"net/http"
 	"strconv"
 
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
+	otlpmetrics "github.com/falcosecurity/falcosidekick/outputs/otlp_metrics"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -18,10 +24,12 @@ import (
 const FissionEventIDKey = "event-id"
 const FissionEventNamespaceKey = "event-namespace"
 const FissionContentType = "application/json"
+const APIv1Namespaces = "/api/v1/namespaces/"
+const ServicesPath = "/services/"
 
 // NewFissionClient returns a new output.Client for accessing Kubernetes.
 func NewFissionClient(config *types.Configuration, stats *types.Statistics, promStats *types.PromStatistics,
-	statsdClient, dogstatsdClient *statsd.Client) (*Client, error) {
+	otlpMetrics *otlpmetrics.OTLPMetrics, statsdClient, dogstatsdClient *statsd.Client) (*Client, error) {
 	if config.Fission.KubeConfig != "" {
 		restConfig, err := clientcmd.BuildConfigFromFlags("", config.Fission.KubeConfig)
 		if err != nil {
@@ -36,24 +44,24 @@ func NewFissionClient(config *types.Configuration, stats *types.Statistics, prom
 			Config:           config,
 			Stats:            stats,
 			PromStats:        promStats,
+			OTLPMetrics:      otlpMetrics,
 			StatsdClient:     statsdClient,
 			DogstatsdClient:  dogstatsdClient,
 			KubernetesClient: clientset,
+			cfg:              config.Fission.CommonConfig,
 		}, nil
 	}
-	return NewClient(
-		Fission,
-		"http://"+config.Fission.RouterService+"."+config.Fission.RouterNamespace+
-			".svc.cluster.local:"+strconv.Itoa(config.Fission.RouterPort)+
-			"/fission-function/"+config.Fission.Function,
-		config.Fission.MutualTLS,
-		config.Fission.CheckCert,
-		config,
-		stats,
-		promStats,
-		statsdClient,
-		dogstatsdClient,
-	)
+
+	endpointUrl := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/fission-function/%s", config.Fission.RouterService, config.Fission.RouterNamespace, config.Fission.RouterPort, config.Fission.Function)
+	initClientArgs := &types.InitClientArgs{
+		Config:          config,
+		Stats:           stats,
+		DogstatsdClient: dogstatsdClient,
+		PromStats:       promStats,
+		StatsdClient:    statsdClient,
+	}
+
+	return NewClient(Fission, endpointUrl, config.Fission.CommonConfig, *initClientArgs)
 }
 
 // FissionCall .
@@ -62,8 +70,8 @@ func (c *Client) FissionCall(falcopayload types.FalcoPayload) {
 
 	if c.Config.Fission.KubeConfig != "" {
 		str, _ := json.Marshal(falcopayload)
-		req := c.KubernetesClient.CoreV1().RESTClient().Post().AbsPath("/api/v1/namespaces/" +
-			c.Config.Fission.RouterNamespace + "/services/" + c.Config.Fission.RouterService +
+		req := c.KubernetesClient.CoreV1().RESTClient().Post().AbsPath(APIv1Namespaces +
+			c.Config.Fission.RouterNamespace + ServicesPath + c.Config.Fission.RouterService +
 			":" + strconv.Itoa(c.Config.Fission.RouterPort) + "/proxy/" + "/fission-function/" +
 			c.Config.Fission.Function).Body(str)
 		req.SetHeader(FissionEventIDKey, uuid.New().String())
@@ -76,27 +84,32 @@ func (c *Client) FissionCall(falcopayload types.FalcoPayload) {
 			go c.CountMetric(Outputs, 1, []string{"output:Fission", "status:error"})
 			c.Stats.Fission.Add(Error, 1)
 			c.PromStats.Outputs.With(map[string]string{"destination": "Fission", "status": Error}).Inc()
-			log.Printf("[ERROR] : %s - %v\n", Fission, err.Error())
+			c.OTLPMetrics.Outputs.With(attribute.String("destination", "Fission"),
+				attribute.String("status", Error)).Inc()
+			utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 			return
 		}
-		log.Printf("[INFO]  : %s - Function Response : %v\n", Fission, string(rawbody))
+		utils.Log(utils.InfoLvl, c.OutputType, fmt.Sprintf("Function Response : %v", string(rawbody)))
 	} else {
-		c.httpClientLock.Lock()
-		defer c.httpClientLock.Unlock()
-		c.AddHeader(FissionEventIDKey, uuid.New().String())
 		c.ContentType = FissionContentType
 
-		err := c.Post(falcopayload)
+		err := c.Post(falcopayload, func(req *http.Request) {
+			req.Header.Set(FissionEventIDKey, uuid.New().String())
+		})
 		if err != nil {
 			go c.CountMetric(Outputs, 1, []string{"output:Fission", "status:error"})
 			c.Stats.Fission.Add(Error, 1)
 			c.PromStats.Outputs.With(map[string]string{"destination": "Fission", "status": Error}).Inc()
-			log.Printf("[ERROR] : %s - %v\n", Fission, err.Error())
+			c.OTLPMetrics.Outputs.With(attribute.String("destination", "Fission"),
+				attribute.String("status", Error)).Inc()
+			utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 			return
 		}
 	}
-	log.Printf("[INFO]  : %s - Call Function \"%v\" OK\n", Fission, c.Config.Fission.Function)
+	utils.Log(utils.InfoLvl, c.OutputType, fmt.Sprintf("Call Function \"%v\" OK", c.Config.Fission.Function))
 	go c.CountMetric(Outputs, 1, []string{"output:Fission", "status:ok"})
 	c.Stats.Fission.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "Fission", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "Fission"),
+		attribute.String("status", OK)).Inc()
 }

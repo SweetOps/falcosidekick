@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
@@ -15,7 +17,7 @@ func TestNewLokiPayload(t *testing.T) {
 			{
 				Stream: map[string]string{
 					"hostname": "test-host",
-					"tags":     "test,example",
+					"tags":     "example,test",
 					"rule":     "Test rule",
 					"source":   "syscalls",
 					"priority": "Debug",

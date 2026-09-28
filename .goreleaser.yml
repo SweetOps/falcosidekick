@@ -1,26 +1,31 @@
+version: 2
+
 project_name: falcosidekick
 
 env:
   - GO111MODULE=on
   - DOCKER_CLI_EXPERIMENTAL=enabled
-  - COSIGN_EXPERIMENTAL=true
+  - DOCKER_BUILDKIT=1
+  - BUILDX_PLATFORMS=linux/amd64,linux/arm64,linux/arm/v7
+  - COSIGN_YES=true
 
 snapshot:
-  name_template: 'latest'
+  version_template: "latest"
 
 checksum:
-  name_template: 'checksums.txt'
+  name_template: "checksums.txt"
 
 # Prevents parallel builds from stepping on each others toes downloading modules
 before:
   hooks:
-  - go mod tidy
+    - go mod tidy
+    - /bin/bash -c 'if [ -n "$(git --no-pager diff --exit-code go.mod go.sum)" ]; then exit 1; fi'
 
 # gomod:
 #   proxy: true
 
 sboms:
-- artifacts: archive
+  - artifacts: archive
 
 builds:
   - id: "falcosidekick"
@@ -31,11 +36,7 @@ builds:
       - arm64
       - arm
     goarm:
-      - '7'
-    asmflags:
-      - all=-trimpath={{.Env.GOPATH}}
-    gcflags:
-      - all=-trimpath={{.Env.GOPATH}}
+      - "7"
     env:
       - CGO_ENABLED=0
     flags:
@@ -44,113 +45,48 @@ builds:
       - "{{ .Env.LDFLAGS }}"
     binary: falcosidekick
 
-dockers:
-  - goos: linux
-    goarch: amd64
-    dockerfile: Dockerfile
-    use: buildx
-    image_templates:
-      - "falcosecurity/falcosidekick:stable-amd64"
-      - "falcosecurity/falcosidekick:{{ .Version }}-amd64"
-      - "public.ecr.aws/falcosecurity/falcosidekick:stable-amd64"
-      - "public.ecr.aws/falcosecurity/falcosidekick:{{ .Version }}-amd64"
-    build_flag_templates:
-      - "--pull"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.name={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--platform=linux/amd64"
+dockers_v2:
+  - dockerfile: Dockerfile
+    platforms:
+      - linux/amd64
+      - linux/arm64
+      - linux/arm/v7
+
+    images:
+      - "falcosecurity/falcosidekick"
+      - "public.ecr.aws/falcosecurity/falcosidekick"
+    tags:
+      - stable
+      - "{{ .Version }}"
+    labels:
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.name": "{{.ProjectName}}"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "{{.Version}}"
     extra_files:
       - LICENSE
-
-  - goos: linux
-    goarch: arm64
-    dockerfile: Dockerfile
-    use: buildx
-    image_templates:
-      - "falcosecurity/falcosidekick:stable-arm64"
-      - "falcosecurity/falcosidekick:{{ .Version }}-arm64"
-      - "public.ecr.aws/falcosecurity/falcosidekick:stable-arm64"
-      - "public.ecr.aws/falcosecurity/falcosidekick:{{ .Version }}-arm64"
-    build_flag_templates:
-      - "--pull"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.name={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--platform=linux/arm64"
-    extra_files:
-      - LICENSE
-
-  - goos: linux
-    goarch: arm
-    goarm: '7'
-    dockerfile: Dockerfile
-    use: buildx
-    image_templates:
-      - "falcosecurity/falcosidekick:stable-armv7"
-      - "falcosecurity/falcosidekick:{{ .Version }}-armv7"
-      - "public.ecr.aws/falcosecurity/falcosidekick:stable-armv7"
-      - "public.ecr.aws/falcosecurity/falcosidekick:{{ .Version }}-armv7"
-    build_flag_templates:
-      - "--pull"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.name={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--platform=linux/arm/v7"
-    extra_files:
-      - LICENSE
-
-docker_manifests:
-- name_template: 'falcosecurity/falcosidekick:stable'
-  image_templates:
-  - 'falcosecurity/falcosidekick:stable-amd64'
-  - 'falcosecurity/falcosidekick:stable-arm64'
-  - 'falcosecurity/falcosidekick:stable-armv7'
-- name_template: 'falcosecurity/falcosidekick:{{ .Version }}'
-  image_templates:
-  - 'falcosecurity/falcosidekick:{{ .Version }}-amd64'
-  - 'falcosecurity/falcosidekick:{{ .Version }}-arm64'
-  - 'falcosecurity/falcosidekick:{{ .Version }}-armv7'
-- name_template: 'public.ecr.aws/falcosecurity/falcosidekick:stable'
-  image_templates:
-  - 'public.ecr.aws/falcosecurity/falcosidekick:stable-amd64'
-  - 'public.ecr.aws/falcosecurity/falcosidekick:stable-arm64'
-  - 'public.ecr.aws/falcosecurity/falcosidekick:stable-armv7'
-- name_template: 'public.ecr.aws/falcosecurity/falcosidekick:{{ .Version }}'
-  image_templates:
-  - 'public.ecr.aws/falcosecurity/falcosidekick:{{ .Version }}-amd64'
-  - 'public.ecr.aws/falcosecurity/falcosidekick:{{ .Version }}-arm64'
-  - 'public.ecr.aws/falcosecurity/falcosidekick:{{ .Version }}-armv7'
 
 signs:
   - id: falcosidekick
-    signature: "${artifact}.sig"
+    signature: "${artifact}.bundle"
     cmd: cosign
-    args: ["sign-blob", "--output-signature", "${artifact}.sig", "--key=./release/cosign.key", "${artifact}"]
-    stdin: '{{ .Env.COSIGN_PASSWORD }}'
+    args: ["sign-blob", "--bundle", "${artifact}.bundle", "${artifact}"]
     artifacts: archive
   - id: checksum
-    signature: "${artifact}.sig"
+    signature: "${artifact}.bundle"
     cmd: cosign
-    args: ["sign-blob", "--output-signature", "${artifact}.sig", "--key=./release/cosign.key", "${artifact}"]
-    stdin: '{{ .Env.COSIGN_PASSWORD }}'
+    args: ["sign-blob", "--bundle", "${artifact}.bundle", "${artifact}"]
     artifacts: checksum
 
 docker_signs:
-- id: falcosidekick
-  cmd: cosign
-  args: ["sign", "--key=./release/cosign.key", "--recursive", "${artifact}" ]
-  artifacts: manifests
-  stdin: '{{ .Env.COSIGN_PASSWORD }}'
-  output: true
+  - id: falcosidekick
+    cmd: cosign
+    args: ["sign", "--recursive", "${artifact}"]
+    artifacts: manifests
+    output: true
 
 release:
   github:
     owner: falcosecurity
     name: falcosidekick
   prerelease: auto
-  extra_files:
-    - glob: ./release/cosign.pub

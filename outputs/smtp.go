@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"bytes"
+	"crypto/tls"
+	"fmt"
 	htmlTemplate "html/template"
-	"log"
 	"net"
 	"regexp"
 	"strconv"
@@ -14,10 +17,12 @@ import (
 	sasl "github.com/emersion/go-sasl"
 	smtp "github.com/emersion/go-smtp"
 
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
+	otlpmetrics "github.com/falcosecurity/falcosidekick/outputs/otlp_metrics"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
-const rfc2822 = "Mon Jan 02 15:04:05 -0700 2006"
+const rfc2822 = "Mon, 02 Jan 2006 15:04:05 -0700"
 
 // SMTPPayload is payload for SMTP Output
 type SMTPPayload struct {
@@ -28,10 +33,11 @@ type SMTPPayload struct {
 }
 
 // NewSMTPClient returns a new output.Client for accessing a SMTP server.
-func NewSMTPClient(config *types.Configuration, stats *types.Statistics, promStats *types.PromStatistics, statsdClient, dogstatsdClient *statsd.Client) (*Client, error) {
+func NewSMTPClient(config *types.Configuration, stats *types.Statistics, promStats *types.PromStatistics,
+	otlpMetrics *otlpmetrics.OTLPMetrics, statsdClient, dogstatsdClient *statsd.Client) (*Client, error) {
 	reg := regexp.MustCompile(`.*:[0-9]+`)
 	if !reg.MatchString(config.SMTP.HostPort) {
-		log.Printf("[ERROR] : SMTP - Bad Host:Port\n")
+		utils.Log(utils.ErrorLvl, "SMTP", "Bad Host:Port")
 		return nil, ErrClientCreation
 	}
 
@@ -40,6 +46,7 @@ func NewSMTPClient(config *types.Configuration, stats *types.Statistics, promSta
 		Config:          config,
 		Stats:           stats,
 		PromStats:       promStats,
+		OTLPMetrics:     otlpMetrics,
 		StatsdClient:    statsdClient,
 		DogstatsdClient: dogstatsdClient,
 	}, nil
@@ -68,7 +75,7 @@ func newSMTPPayload(falcopayload types.FalcoPayload, config *types.Configuration
 	var outtext bytes.Buffer
 	err := ttmpl.Execute(&outtext, falcopayload)
 	if err != nil {
-		log.Printf("[ERROR] : SMTP - %v\n", err)
+		utils.Log(utils.ErrorLvl, "SMTP", err.Error())
 		return s
 	}
 	s.Body += outtext.String()
@@ -84,7 +91,7 @@ func newSMTPPayload(falcopayload types.FalcoPayload, config *types.Configuration
 	var outhtml bytes.Buffer
 	err = htmpl.Execute(&outhtml, falcopayload)
 	if err != nil {
-		log.Printf("[ERROR] : SMTP - %v\n", err)
+		utils.Log(utils.ErrorLvl, "SMTP", err.Error())
 		return s
 	}
 	s.Body += outhtml.String()
@@ -95,7 +102,7 @@ func newSMTPPayload(falcopayload types.FalcoPayload, config *types.Configuration
 func (c *Client) ReportErr(message string, err error) {
 	go c.CountMetric("outputs", 1, []string{"output:smtp", "status:error"})
 	c.Stats.SMTP.Add(Error, 1)
-	log.Printf("[ERROR] : SMTP - %s : %v\n", message, err)
+	utils.Log(utils.ErrorLvl, c.OutputType, fmt.Sprintf("%s : %v", message, err))
 }
 
 func (c *Client) GetAuth() (sasl.Client, error) {
@@ -127,31 +134,52 @@ func (c *Client) GetAuth() (sasl.Client, error) {
 func (c *Client) SendMail(falcopayload types.FalcoPayload) {
 	sp := newSMTPPayload(falcopayload, c.Config)
 
-	to := strings.Split(strings.Replace(c.Config.SMTP.To, " ", "", -1), ",")
-	auth, err := c.GetAuth()
+	to := strings.Split(strings.ReplaceAll(c.Config.SMTP.To, " ", ""), ",")
+
+	var smtpClient *smtp.Client
+	var err error
+	if c.Config.SMTP.TLS {
+		tlsCfg := &tls.Config{
+			ServerName: strings.Split(c.Config.SMTP.HostPort, ":")[0],
+			MinVersion: tls.VersionTLS12,
+		}
+		smtpClient, err = smtp.DialStartTLS(c.Config.SMTP.HostPort, tlsCfg)
+	} else {
+		smtpClient, err = smtp.Dial(c.Config.SMTP.HostPort)
+	}
 	if err != nil {
-		c.ReportErr("SASL Authentication mechanisms", err)
+		c.ReportErr("Client error", err)
 		return
 	}
-	body := sp.To + "\n" + sp.Subject + "\n" + sp.From + "\n" + sp.Body
+
+	if c.Config.SMTP.AuthMechanism != None {
+		auth, err := c.GetAuth()
+		if err != nil {
+			c.ReportErr("SASL Authentication mechanisms", err)
+			return
+		}
+		smtpClient.Auth(auth)
+	}
+
+	body := sp.Subject + "\n" + sp.Body
 
 	if c.Config.Debug {
-		log.Printf("[DEBUG] : SMTP payload : \nServer: %v\n%v\n%v\nSubject: %v\n", c.Config.SMTP.HostPort, sp.From, sp.To, sp.Subject)
+		utils.Log(utils.DebugLvl, c.OutputType, fmt.Sprintf("payload : \nServer: %v\n%v\n%v\nSubject: %v", c.Config.SMTP.HostPort, sp.From, sp.To, sp.Subject))
 		if c.Config.SMTP.AuthMechanism != "" {
-			log.Printf("[DEBUG] : SMTP - SASL Auth : \nMechanisms: %v\nUser: %v\nToken: %v\nIdentity: %v\nTrace: %v\n", c.Config.SMTP.AuthMechanism, c.Config.SMTP.User, c.Config.SMTP.Token, c.Config.SMTP.Identity, c.Config.SMTP.Trace)
+			utils.Log(utils.DebugLvl, c.OutputType, fmt.Sprintf("SASL Auth : \nMechanisms: %v\nUser: %v\nToken: %v\nIdentity: %v\nTrace: %v", c.Config.SMTP.AuthMechanism, c.Config.SMTP.User, c.Config.SMTP.Token, c.Config.SMTP.Identity, c.Config.SMTP.Trace))
 		} else {
-			log.Printf("[DEBUG] : SMTP - SASL Auth : Disabled\n")
+			utils.Log(utils.DebugLvl, c.OutputType, "SASL Auth : Disabled")
 		}
 	}
 
 	c.Stats.SMTP.Add("total", 1)
-	err = smtp.SendMail(c.Config.SMTP.HostPort, auth, c.Config.SMTP.From, to, strings.NewReader(body))
+	err = smtpClient.SendMail(c.Config.SMTP.From, to, strings.NewReader(body))
 	if err != nil {
 		c.ReportErr("Send Mail failure", err)
 		return
 	}
 
-	log.Printf("[INFO]  : SMTP - Sent OK\n")
+	utils.Log(utils.InfoLvl, c.OutputType, " SMTP - Sent OK\n")
 	go c.CountMetric("outputs", 1, []string{"output:smtp", "status:ok"})
 	c.Stats.SMTP.Add(OK, 1)
 }

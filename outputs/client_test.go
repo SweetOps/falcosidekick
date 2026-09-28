@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
@@ -9,7 +11,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
-	"io/ioutil"
 	"math/big"
 	"net"
 	"net/http"
@@ -25,6 +26,8 @@ import (
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
+const Status200 string = "/200"
+
 var falcoTestInput = `{"output":"This is a test from falcosidekick","priority":"Debug","rule":"Test rule", "time":"2001-01-01T01:10:00Z","source":"syscalls","output_fields": {"proc.name":"falcosidekick", "proc.tty": 1234}, "tags":["test","example"], "hostname":"test-host"}`
 
 func TestNewClient(t *testing.T) {
@@ -34,11 +37,17 @@ func TestNewClient(t *testing.T) {
 	stats := &types.Statistics{}
 	promStats := &types.PromStatistics{}
 
-	testClientOutput := Client{OutputType: "test", EndpointURL: u, MutualTLSEnabled: false, CheckCert: true, HeaderList: []Header{}, ContentType: "application/json; charset=utf-8", Config: config, Stats: stats, PromStats: promStats}
-	_, err := NewClient("test", "localhost/%*$¨^!/:;", false, true, config, stats, promStats, nil, nil)
+	initClientArgs := &types.InitClientArgs{
+		Config:    config,
+		Stats:     stats,
+		PromStats: promStats,
+	}
+
+	testClientOutput := Client{OutputType: "test", EndpointURL: u, cfg: types.CommonConfig{CheckCert: true}, ContentType: "application/json; charset=utf-8", Config: config, Stats: stats, PromStats: promStats}
+	_, err := NewClient("test", "localhost/%*$¨^!/:;", types.CommonConfig{CheckCert: true}, *initClientArgs)
 	require.NotNil(t, err)
 
-	nc, err := NewClient("test", "http://localhost", false, true, config, stats, promStats, nil, nil)
+	nc, err := NewClient("test", "http://localhost", types.CommonConfig{CheckCert: true}, *initClientArgs)
 	require.Nil(t, err)
 	require.Equal(t, &testClientOutput, nc)
 }
@@ -49,7 +58,7 @@ func TestPost(t *testing.T) {
 			t.Fatalf("expected method : POST, got %s\n", r.Method)
 		}
 		switch r.URL.EscapedPath() {
-		case "/200":
+		case Status200:
 			w.WriteHeader(http.StatusOK)
 		case "/400":
 			w.WriteHeader(http.StatusBadRequest)
@@ -69,7 +78,7 @@ func TestPost(t *testing.T) {
 	}))
 
 	for i, j := range map[string]error{
-		"/200": nil, "/400": ErrHeaderMissing,
+		Status200: nil, "/400": ErrHeaderMissing,
 		"/401": ErrClientAuthenticationError,
 		"/403": ErrForbidden,
 		"/404": ErrNotFound,
@@ -77,7 +86,12 @@ func TestPost(t *testing.T) {
 		"/429": ErrTooManyRequest,
 		"/502": ErrBadGateway,
 	} {
-		nc, err := NewClient("", ts.URL+i, false, true, &types.Configuration{}, &types.Statistics{}, &types.PromStatistics{}, nil, nil)
+		initClientArgs := &types.InitClientArgs{
+			Config:    &types.Configuration{},
+			Stats:     &types.Statistics{},
+			PromStats: &types.PromStatistics{},
+		}
+		nc, err := NewClient("", ts.URL+i, types.CommonConfig{CheckCert: true}, *initClientArgs)
 		require.Nil(t, err)
 		require.NotEmpty(t, nc)
 
@@ -92,13 +106,18 @@ func TestAddHeader(t *testing.T) {
 		passedVal := r.Header.Get(headerKey)
 		require.Equal(t, passedVal, headerVal)
 	}))
-	nc, err := NewClient("", ts.URL, false, true, &types.Configuration{}, &types.Statistics{}, &types.PromStatistics{}, nil, nil)
+	initClientArgs := &types.InitClientArgs{
+		Config:    &types.Configuration{},
+		Stats:     &types.Statistics{},
+		PromStats: &types.PromStatistics{},
+	}
+	nc, err := NewClient("", ts.URL, types.CommonConfig{CheckCert: true}, *initClientArgs)
 	require.Nil(t, err)
 	require.NotEmpty(t, nc)
 
-	nc.AddHeader(headerKey, headerVal)
-
-	nc.Post("")
+	nc.Post("", func(req *http.Request) {
+		req.Header.Set(headerKey, headerVal)
+	})
 }
 
 func TestAddBasicAuth(t *testing.T) {
@@ -143,13 +162,18 @@ func TestAddBasicAuth(t *testing.T) {
 		// and that should be the provided value.
 		require.Equal(t, digest, "dXNlcjpwYXNz")
 	}))
-	nc, err := NewClient("", ts.URL, false, true, &types.Configuration{}, &types.Statistics{}, &types.PromStatistics{}, nil, nil)
+	initClientArgs := &types.InitClientArgs{
+		Config:    &types.Configuration{},
+		Stats:     &types.Statistics{},
+		PromStats: &types.PromStatistics{},
+	}
+	nc, err := NewClient("", ts.URL, types.CommonConfig{CheckCert: true}, *initClientArgs)
 	require.Nil(t, err)
 	require.NotEmpty(t, nc)
 
-	nc.BasicAuth(username, password)
-
-	nc.Post("")
+	nc.Post("", func(req *http.Request) {
+		req.SetBasicAuth(username, password)
+	})
 }
 
 func TestHeadersResetAfterReq(t *testing.T) {
@@ -159,22 +183,30 @@ func TestHeadersResetAfterReq(t *testing.T) {
 		require.Equal(t, 1, len(passedList), "Expected %v to have 1 element", passedList)
 	}))
 
-	nc, err := NewClient("", ts.URL, false, true, &types.Configuration{}, &types.Statistics{}, &types.PromStatistics{}, nil, nil)
+	initClientArgs := &types.InitClientArgs{
+		Config:    &types.Configuration{},
+		Stats:     &types.Statistics{},
+		PromStats: &types.PromStatistics{},
+	}
+	nc, err := NewClient("", ts.URL, types.CommonConfig{CheckCert: true}, *initClientArgs)
 	require.Nil(t, err)
 	require.NotEmpty(t, nc)
 
-	nc.AddHeader(headerKey, headerVal)
+	nc.Post("", func(req *http.Request) {
+		req.Header.Set(headerKey, headerVal)
+	})
 
-	nc.Post("")
-
-	nc.AddHeader(headerKey, headerVal)
-
-	nc.Post("")
+	nc.Post("", func(req *http.Request) {
+		req.Header.Set(headerKey, headerVal)
+	})
 }
 
 func TestMutualTlsPost(t *testing.T) {
 	config := &types.Configuration{}
-	config.MutualTLSFilesPath = "/tmp/falcosidekicktests"
+	config.MutualTLSFilesPath = "/tmp/falcosidekicktests/client"
+	config.MutualTLSClient.CertFile = "/tmp/falcosidekicktests/client/client.crt"
+	config.MutualTLSClient.KeyFile = "/tmp/falcosidekicktests/client/client.key"
+	config.MutualTLSClient.CaCertFile = "/tmp/falcosidekicktests/client/ca.crt"
 	// delete folder to avoid makedir failure
 	os.RemoveAll(config.MutualTLSFilesPath)
 
@@ -190,7 +222,7 @@ func TestMutualTlsPost(t *testing.T) {
 		if r.Method != "POST" {
 			t.Fatalf("expected method : POST, got %s\n", r.Method)
 		}
-		if r.URL.EscapedPath() == "/200" {
+		if r.URL.EscapedPath() == Status200 {
 			w.WriteHeader(http.StatusOK)
 		}
 	}))
@@ -202,7 +234,12 @@ func TestMutualTlsPost(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 
-	nc, err := NewClient("", server.URL+"/200", true, true, config, &types.Statistics{}, &types.PromStatistics{}, nil, nil)
+	initClientArgs := &types.InitClientArgs{
+		Config:    config,
+		Stats:     &types.Statistics{},
+		PromStats: &types.PromStatistics{},
+	}
+	nc, err := NewClient("", server.URL+Status200, types.CommonConfig{MutualTLS: true, CheckCert: true}, *initClientArgs)
 	require.Nil(t, err)
 	require.NotEmpty(t, nc)
 
@@ -212,7 +249,7 @@ func TestMutualTlsPost(t *testing.T) {
 }
 
 func certsetup(config *types.Configuration) (serverTLSConf *tls.Config, err error) {
-	err = os.Mkdir(config.MutualTLSFilesPath, 0755)
+	err = os.MkdirAll(config.MutualTLSFilesPath, 0755)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +293,7 @@ func certsetup(config *types.Configuration) (serverTLSConf *tls.Config, err erro
 	})
 
 	// save ca to ca.crt file (it will be used by Client)
-	err = ioutil.WriteFile(config.MutualTLSFilesPath+"/ca.crt", caPEM.Bytes(), 0600)
+	err = os.WriteFile(config.MutualTLSClient.CaCertFile, caPEM.Bytes(), 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -356,7 +393,7 @@ func certsetup(config *types.Configuration) (serverTLSConf *tls.Config, err erro
 	})
 
 	// save client cert and key to client.crt and client.key
-	err = ioutil.WriteFile(config.MutualTLSFilesPath+"/client.crt", clientCertPEM.Bytes(), 0600)
+	err = os.WriteFile(config.MutualTLSClient.CertFile, clientCertPEM.Bytes(), 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +402,7 @@ func certsetup(config *types.Configuration) (serverTLSConf *tls.Config, err erro
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(clientCertPrivKey),
 	})
-	err = ioutil.WriteFile(config.MutualTLSFilesPath+"/client.key", clientCertPrivKeyPEM.Bytes(), 0600)
+	err = os.WriteFile(config.MutualTLSClient.KeyFile, clientCertPrivKeyPEM.Bytes(), 0600)
 	if err != nil {
 		return nil, err
 	}

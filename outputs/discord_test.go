@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
@@ -21,11 +23,6 @@ func TestNewDiscordPayload(t *testing.T) {
 				Color:       "12370112", // light grey
 				Fields: []discordEmbedFieldPayload{
 					{
-						Name:   "proc.name",
-						Value:  fmt.Sprintf("```%s```", "falcosidekick"),
-						Inline: true,
-					},
-					{
 						Name:   "rule",
 						Value:  "Test rule",
 						Inline: true,
@@ -46,8 +43,13 @@ func TestNewDiscordPayload(t *testing.T) {
 						Inline: true,
 					},
 					{
+						Name:   "proc.name",
+						Value:  fmt.Sprintf("```%s```", "falcosidekick"),
+						Inline: true,
+					},
+					{
 						Name:   "tags",
-						Value:  "test, example",
+						Value:  "example, test",
 						Inline: true,
 					},
 					{

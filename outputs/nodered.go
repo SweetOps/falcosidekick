@@ -1,9 +1,13 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
-	"encoding/base64"
-	"log"
+	"net/http"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -11,24 +15,22 @@ import (
 func (c *Client) NodeRedPost(falcopayload types.FalcoPayload) {
 	c.Stats.NodeRed.Add(Total, 1)
 
-	c.httpClientLock.Lock()
-	defer c.httpClientLock.Unlock()
-	if c.Config.NodeRed.User != "" && c.Config.NodeRed.Password != "" {
-		c.AddHeader("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(c.Config.NodeRed.User+":"+c.Config.NodeRed.Password)))
-	}
-
-	if len(c.Config.NodeRed.CustomHeaders) != 0 {
-		for i, j := range c.Config.NodeRed.CustomHeaders {
-			c.AddHeader(i, j)
+	err := c.Post(falcopayload, func(req *http.Request) {
+		if c.Config.NodeRed.User != "" && c.Config.NodeRed.Password != "" {
+			req.SetBasicAuth(c.Config.NodeRed.User, c.Config.NodeRed.Password)
 		}
-	}
 
-	err := c.Post(falcopayload)
+		for i, j := range c.Config.NodeRed.CustomHeaders {
+			req.Header.Set(i, j)
+		}
+	})
 	if err != nil {
 		go c.CountMetric(Outputs, 1, []string{"output:nodered", "status:error"})
 		c.Stats.NodeRed.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "nodered", "status": Error}).Inc()
-		log.Printf("[ERROR] : NodeRed - %v\n", err.Error())
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "nodered"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
@@ -36,4 +38,6 @@ func (c *Client) NodeRedPost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:nodered", "status:ok"})
 	c.Stats.NodeRed.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "nodered", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "nodered"),
+		attribute.String("status", OK)).Inc()
 }

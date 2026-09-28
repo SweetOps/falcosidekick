@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
@@ -27,7 +29,7 @@ func TestNewOpsgeniePayload(t *testing.T) {
 
 	var f types.FalcoPayload
 	require.Nil(t, json.Unmarshal([]byte(falcoTestInput), &f))
-	output := newOpsgeniePayload(f, &types.Configuration{})
+	output := newOpsgeniePayload(f)
 
 	require.Equal(t, output, expectedOutput)
 }

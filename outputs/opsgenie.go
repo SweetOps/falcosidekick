@@ -1,9 +1,14 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
-	"log"
+	"net/http"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -15,7 +20,7 @@ type opsgeniePayload struct {
 	Priority    string            `json:"priority,omitempty"`
 }
 
-func newOpsgeniePayload(falcopayload types.FalcoPayload, config *types.Configuration) opsgeniePayload {
+func newOpsgeniePayload(falcopayload types.FalcoPayload) opsgeniePayload {
 	details := make(map[string]string, len(falcopayload.OutputFields))
 	for i, j := range falcopayload.OutputFields {
 		switch v := j.(type) {
@@ -62,16 +67,17 @@ func newOpsgeniePayload(falcopayload types.FalcoPayload, config *types.Configura
 // OpsgeniePost posts event to OpsGenie
 func (c *Client) OpsgeniePost(falcopayload types.FalcoPayload) {
 	c.Stats.Opsgenie.Add(Total, 1)
-	c.httpClientLock.Lock()
-	defer c.httpClientLock.Unlock()
-	c.AddHeader(AuthorizationHeaderKey, "GenieKey "+c.Config.Opsgenie.APIKey)
 
-	err := c.Post(newOpsgeniePayload(falcopayload, c.Config))
+	err := c.Post(newOpsgeniePayload(falcopayload), func(req *http.Request) {
+		req.Header.Set(AuthorizationHeaderKey, "GenieKey "+c.Config.Opsgenie.APIKey)
+	})
 	if err != nil {
 		go c.CountMetric(Outputs, 1, []string{"output:opsgenie", "status:error"})
 		c.Stats.Opsgenie.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "opsgenie", "status": Error}).Inc()
-		log.Printf("[ERROR] : OpsGenie - %v\n", err)
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "opsgenie"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
@@ -79,4 +85,6 @@ func (c *Client) OpsgeniePost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:opsgenie", "status:ok"})
 	c.Stats.Opsgenie.Add("ok", 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "opsgenie", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "opsgenie"),
+		attribute.String("status", OK)).Inc()
 }

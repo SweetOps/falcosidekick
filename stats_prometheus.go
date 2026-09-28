@@ -1,15 +1,20 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package main
 
 import (
-	"log"
+	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
+
+const metricPrefix string = "falcosecurity_falcosidekick_"
 
 func getInitPromStats(config *types.Configuration) *types.PromStatistics {
 	promStats = &types.PromStatistics{
@@ -23,7 +28,7 @@ func getInitPromStats(config *types.Configuration) *types.PromStatistics {
 func getInputNewCounterVec() *prometheus.CounterVec {
 	return promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "falcosidekick_inputs",
+			Name: metricPrefix + "inputs_total",
 		},
 		[]string{"source", "status"},
 	)
@@ -32,7 +37,7 @@ func getInputNewCounterVec() *prometheus.CounterVec {
 func getOutputNewCounterVec() *prometheus.CounterVec {
 	return promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "falcosidekick_outputs",
+			Name: metricPrefix + "outputs_total",
 		},
 		[]string{"destination", "status"},
 	)
@@ -41,28 +46,38 @@ func getOutputNewCounterVec() *prometheus.CounterVec {
 func getFalcoNewCounterVec(config *types.Configuration) *prometheus.CounterVec {
 	regPromLabels, _ := regexp.Compile("^[a-zA-Z_:][a-zA-Z0-9_:]*$")
 	labelnames := []string{
+		"hostname",
 		"rule",
 		"priority",
+		"priority_raw",
+		"source",
 		"k8s_ns_name",
 		"k8s_pod_name",
 	}
 	for i := range config.Customfields {
-		if !regPromLabels.MatchString(i) {
-			log.Printf("[ERROR] : Custom field '%v' is not a valid prometheus label", i)
+		if !regPromLabels.MatchString(strings.ReplaceAll(i, ".", "_")) {
+			utils.Log(utils.ErrorLvl, "Prometheus", fmt.Sprintf("Custom field '%v' is not a valid prometheus label", i))
 			continue
 		}
-		labelnames = append(labelnames, i)
+		labelnames = append(labelnames, strings.ReplaceAll(i, ".", "_"))
+	}
+	for i := range config.Templatedfields {
+		if !regPromLabels.MatchString(strings.ReplaceAll(i, ".", "_")) {
+			utils.Log(utils.ErrorLvl, "Prometheus", fmt.Sprintf("Templated field '%v' is not a valid prometheus label", i))
+			continue
+		}
+		labelnames = append(labelnames, strings.ReplaceAll(i, ".", "_"))
 	}
 	for _, i := range config.Prometheus.ExtraLabelsList {
 		if !regPromLabels.MatchString(strings.ReplaceAll(i, ".", "_")) {
-			log.Printf("[ERROR] : Extra field '%v' is not a valid prometheus label", i)
+			utils.Log(utils.ErrorLvl, "Prometheus", fmt.Sprintf("Extra field '%v' is not a valid prometheus label", i))
 			continue
 		}
 		labelnames = append(labelnames, strings.ReplaceAll(i, ".", "_"))
 	}
 	return promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "falco_events",
+			Name: metricPrefix + "falco_events_total",
 		},
 		labelnames,
 	)

@@ -1,18 +1,24 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"log/syslog"
 	"strings"
 	"time"
 
 	"github.com/DataDog/datadog-go/statsd"
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
+	otlpmetrics "github.com/falcosecurity/falcosidekick/outputs/otlp_metrics"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
-func NewSyslogClient(config *types.Configuration, stats *types.Statistics, promStats *types.PromStatistics, statsdClient, dogstatsdClient *statsd.Client) (*Client, error) {
+func NewSyslogClient(config *types.Configuration, stats *types.Statistics, promStats *types.PromStatistics,
+	otlpMetrics *otlpmetrics.OTLPMetrics, statsdClient, dogstatsdClient *statsd.Client) (*Client, error) {
 	ok := isValidProtocolString(strings.ToLower(config.Syslog.Protocol))
 	if !ok {
 		return nil, fmt.Errorf("failed to configure Syslog client: invalid protocol %s", config.Syslog.Protocol)
@@ -23,6 +29,7 @@ func NewSyslogClient(config *types.Configuration, stats *types.Statistics, promS
 		Config:          config,
 		Stats:           stats,
 		PromStats:       promStats,
+		OTLPMetrics:     otlpMetrics,
 		StatsdClient:    statsdClient,
 		DogstatsdClient: dogstatsdClient,
 	}, nil
@@ -84,9 +91,12 @@ func (c *Client) SyslogPost(falcopayload types.FalcoPayload) {
 		go c.CountMetric(Outputs, 1, []string{"output:syslog", "status:error"})
 		c.Stats.Syslog.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "syslog", "status": Error}).Inc()
-		log.Printf("[ERROR] : Syslog - %v\n", err)
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "syslog"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
+	defer sysLog.Close()
 
 	var payload []byte
 
@@ -120,11 +130,14 @@ func (c *Client) SyslogPost(falcopayload types.FalcoPayload) {
 		go c.CountMetric(Outputs, 1, []string{"output:syslog", "status:error"})
 		c.Stats.Syslog.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "syslog", "status": Error}).Inc()
-		log.Printf("[ERROR] : Syslog - %v\n", err)
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "syslog"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
 	go c.CountMetric(Outputs, 1, []string{"output:syslog", "status:ok"})
 	c.Stats.Syslog.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "syslog", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "syslog"), attribute.String("status", OK)).Inc()
 }

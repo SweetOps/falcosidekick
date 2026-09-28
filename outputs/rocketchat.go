@@ -1,10 +1,16 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"bytes"
-	"log"
+	"fmt"
+	"sort"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -31,6 +37,7 @@ func newRocketchatPayload(falcopayload types.FalcoPayload, config *types.Configu
 		field.Short = true
 		fields = append(fields, field)
 		if len(falcopayload.Tags) != 0 {
+			sort.Strings(falcopayload.Tags)
 			field.Title = Tags
 			field.Value = strings.Join(falcopayload.Tags, ", ")
 			field.Short = true
@@ -69,7 +76,7 @@ func newRocketchatPayload(falcopayload types.FalcoPayload, config *types.Configu
 	if config.Rocketchat.MessageFormatTemplate != nil {
 		buf := &bytes.Buffer{}
 		if err := config.Rocketchat.MessageFormatTemplate.Execute(buf, falcopayload); err != nil {
-			log.Printf("[ERROR] : RocketChat - Error expanding RocketChat message %v", err)
+			utils.Log(utils.ErrorLvl, "RocketChat", fmt.Sprintf("Error expanding RocketChat message: %v", err))
 		} else {
 			messageText = buf.String()
 		}
@@ -107,7 +114,7 @@ func newRocketchatPayload(falcopayload types.FalcoPayload, config *types.Configu
 
 	s := slackPayload{
 		Text:        messageText,
-		Username:    "Falcosidekick",
+		Username:    config.Rocketchat.Username,
 		IconURL:     iconURL,
 		Attachments: attachments}
 
@@ -123,7 +130,9 @@ func (c *Client) RocketchatPost(falcopayload types.FalcoPayload) {
 		go c.CountMetric(Outputs, 1, []string{"output:rocketchat", "status:error"})
 		c.Stats.Rocketchat.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "rocketchat", "status": Error}).Inc()
-		log.Printf("[ERROR] : RocketChat - %v\n", err.Error())
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "rocketchat"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
@@ -131,4 +140,6 @@ func (c *Client) RocketchatPost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:rocketchat", "status:ok"})
 	c.Stats.Rocketchat.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "rocketchat", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "rocketchat"),
+		attribute.String("status", OK)).Inc()
 }

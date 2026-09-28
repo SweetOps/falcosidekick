@@ -1,39 +1,231 @@
 # Changelog
 
+## 2.35.0 - 2026-08-31
+#### Enhancement
+- Add a `TLS` field and allow to set the CA cert for the `OTLP Traces`/`OTLP Metrics`/`OTLP Logs` outputs ([PR#1389](https://github.com/falcosecurity/falcosidekick/pull/1389) thanks to [@AleksandarSavchev](https://github.com/AleksandarSavchev))
+- Add the `MessageThreadID` and `Host` settings for the `Telegram` output ([PR#1393](https://github.com/falcosecurity/falcosidekick/pull/1393) thanks to [@1323ED5](https://github.com/1323ED5))
+- Upgrade the `Azure Event Hubs` SDK to v2 ([PR#1399](https://github.com/falcosecurity/falcosidekick/pull/1399) thanks to [@chimanjain](https://github.com/chimanjain))
+- Add the documentation for the `OTLP` outputs ([PR#1414](https://github.com/falcosecurity/falcosidekick/pull/1414) thanks to [@S3DFX-CYBER](https://github.com/S3DFX-CYBER))
+
+#### Fix
+- Fix a race condition when multiple outputs are configured ([PR#1390](https://github.com/falcosecurity/falcosidekick/pull/1390) thanks to [@marwinski](https://github.com/marwinski))
+- Handle the `CheckCert` setting correctly for the `OTLP` outputs ([PR#1389](https://github.com/falcosecurity/falcosidekick/pull/1389) thanks to [@AleksandarSavchev](https://github.com/AleksandarSavchev))
+- Emit an RFC 5322-compliant `Date` header for the `SMTP` output ([PR#1382](https://github.com/falcosecurity/falcosidekick/pull/1382) thanks to [@billzter](https://github.com/billzter))
+- Prevent a panic with non-string `output_fields` in the `Dynatrace` output ([PR#1387](https://github.com/falcosecurity/falcosidekick/pull/1387) thanks to [@arpitjain099](https://github.com/arpitjain099))
+- Handle numeric `output_fields` without a string assertion ([PR#1413](https://github.com/falcosecurity/falcosidekick/pull/1413) thanks to [@arpitjain099](https://github.com/arpitjain099))
+- Send a checksum with the `PutObject` calls for the `AWS S3` output ([PR#1415](https://github.com/falcosecurity/falcosidekick/pull/1415) thanks to [@manduinca](https://github.com/manduinca))
+- Use Unix epoch seconds for the timestamps of the `PolicyReports` ([PR#1425](https://github.com/falcosecurity/falcosidekick/pull/1425) thanks to [@christianhuth](https://github.com/christianhuth))
+
+## 2.34.1 - 2026-06-03
+#### Fix
+- Prevent DoS panics from malformed `output_fields` in the `OTLP Traces` and `OTLP Metrics` outputs ([PR#1379](https://github.com/falcosecurity/falcosidekick/pull/1379) thanks to [@c2ndev](https://github.com/c2ndev))
+
+## 2.34.0 - 2026-05-22
+#### New
+- New output: **Google SecOps** (Chronicle) ([PR#1288](https://github.com/falcosecurity/falcosidekick/pull/1288) thanks to [@brennoo](https://github.com/brennoo))
+
+#### Enhancement
+- Add `TLS` and mutual `TLS` support for the `Redis` output ([issue#1211](https://github.com/falcosecurity/falcosidekick/issues/1211))
+- Add `/area automation` to the PR template ([PR#1359](https://github.com/falcosecurity/falcosidekick/pull/1359) thanks to [@ekoops](https://github.com/ekoops))
+- Update the vulnerable Go modules ([PR#1366](https://github.com/falcosecurity/falcosidekick/pull/1366) thanks to [@c2ndev](https://github.com/c2ndev))
+
+#### Fix
+- Replace the dots by underscores in the labels of the metrics for the custom fields ([PR#1337](https://github.com/falcosecurity/falcosidekick/pull/1337) thanks to [@raajheshkannaa](https://github.com/raajheshkannaa))
+- Bind the `MessageThreadID` env var to fix the ignored topic routing for `Telegram` ([PR#1357](https://github.com/falcosecurity/falcosidekick/pull/1357) thanks to [@raajheshkannaa](https://github.com/raajheshkannaa))
+- Use the `AWS` config for the S3 client in `UploadS3` ([PR#1363](https://github.com/falcosecurity/falcosidekick/pull/1363) thanks to [@alexmircea98](https://github.com/alexmircea98))
+- Fix the config examples for the `AWS Security Lake` output ([PR#1356](https://github.com/falcosecurity/falcosidekick/pull/1356) thanks to [@immanuwell](https://github.com/immanuwell))
+
+## 2.33.0 - 2026-03-09
+#### Enhancement
+- Add the `alertname` label for the `AlertManager` output ([PR#1278](https://github.com/falcosecurity/falcosidekick/pull/1278) thanks to [@edkennard](https://github.com/edkennard))
+- Use the recommended chain of configuration providers for the `AWS` outputs ([PR#1219](https://github.com/falcosecurity/falcosidekick/pull/1219) thanks to [@gnadaban](https://github.com/gnadaban))
+- Upgrade to Go 1.26 ([PR#1314](https://github.com/falcosecurity/falcosidekick/pull/1314))
+- Update the deprecated `goreleaser` docker build ([PR#1252](https://github.com/falcosecurity/falcosidekick/pull/1252))
+- Add the `--bundle` flag to `cosign sign-blob` for the `cosign` v3 compatibility ([PR#1322](https://github.com/falcosecurity/falcosidekick/pull/1322) thanks to [@c2ndev](https://github.com/c2ndev))
+- Migrate the `goreleaser` signs config to the `cosign` v3 bundle format ([PR#1323](https://github.com/falcosecurity/falcosidekick/pull/1323) thanks to [@c2ndev](https://github.com/c2ndev))
+
+#### Fix
+- Fix the default endpoint of the `AlertManager` output which returned an unexpected response (410) ([PR#1281](https://github.com/falcosecurity/falcosidekick/pull/1281) thanks to [@kupschp](https://github.com/kupschp))
+- Update `aws-sdk-go-v2` to fix the retrieval of the metadata with `EKS Pod Identity` ([PR#1291](https://github.com/falcosecurity/falcosidekick/pull/1291) thanks to [@dicksontung](https://github.com/dicksontung))
+- Update `service/sqs` to v1.42.22 to fix the `ResolveEndpointV2` error ([PR#1302](https://github.com/falcosecurity/falcosidekick/pull/1302) thanks to [@ansilh](https://github.com/ansilh))
+- Fix several unaddressed bugs: wrong `MinimumPriority` config for `RabbitMQ`, wrong config field cleared when the `OTLP Metrics` and `DogStatsD` inits fail, trailing comma in the `Dynatrace` output type ([PR#1320](https://github.com/falcosecurity/falcosidekick/pull/1320))
+- Fix a typo in the `README` ([PR#1303](https://github.com/falcosecurity/falcosidekick/pull/1303) thanks to [@fr4nsyz](https://github.com/fr4nsyz))
+
+## 2.32.0 - 2025-09-09
+#### New
+- New output: **Logstash** ([PR#1146](https://github.com/falcosecurity/falcosidekick/pull/1146) thanks to [@thabiger](https://github.com/thabiger))
+- New output: **Splunk** ([PR#1233](https://github.com/falcosecurity/falcosidekick/pull/1233) thanks to [@fjvela](https://github.com/fjvela))
+
+#### Enhancement
+- Migrate the `AWS` outputs from `aws-sdk-go` v1 to v2 ([PR#1170](https://github.com/falcosecurity/falcosidekick/pull/1170) thanks to [@chenliu1993](https://github.com/chenliu1993))
+- Allow to specify a username for the `Redis` output ([PR#1212](https://github.com/falcosecurity/falcosidekick/pull/1212) thanks to [@pgporada](https://github.com/pgporada))
+- Update Go and Alpine versions, clean up and update the CI ([PR#1246](https://github.com/falcosecurity/falcosidekick/pull/1246))
+
+#### Fix
+- Fix the URL used by the `Mattermost` output ([PR#1192](https://github.com/falcosecurity/falcosidekick/pull/1192) thanks to [@zdeneksvarc](https://github.com/zdeneksvarc))
+
+## 2.31.1 - 2025-02-04
+#### Fix
+- Fix error while closing the writer for `GCPStorage` ([PR#1116](https://github.com/falcosecurity/falcosidekick/pull/1116) thanks to [@chanukya-yekollu-exa](https://github.com/chanukya-yekollu-exa))
+
+## 2.31.0 - 2025-02-03
+#### New
+- New output: **OTLP Logs** ([PR#1109](https://github.com/falcosecurity/falcosidekick/pull/1109))
+
+#### Enhancement
+- Add the namespace and the pod name as labels by default in `Loki` payload ([PR#1087](https://github.com/falcosecurity/falcosidekick/pull/1087) thanks to [@afreyermuth98](https://github.com/afreyermuth98))
+- Allow to set the format for the `Loki` payload to JSON ([PR#1091](https://github.com/falcosecurity/falcosidekick/pull/1091))
+- Allow to set a template for the subjets for `NATS`/`STAN` outputs ([PR#1099](https://github.com/falcosecurity/falcosidekick/pull/1099))
+- Improve the logger with a generic and extensible method ([PR#1102](https://github.com/falcosecurity/falcosidekick/pull/1102))
+
+#### Fix
+- Remove forgotten debug line ([PR#1088](https://github.com/falcosecurity/falcosidekick/pull/1088))
+- Fix missing templated fields as labls in `Loki` payload ([PR#1091](https://github.com/falcosecurity/falcosidekick/pull/1091))
+- Fix creation error of `ClusterPolicyReports` ([PR#1100](https://github.com/falcosecurity/falcosidekick/pull/100))
+- Fix missing custom headers for HTTP requests for `Loki` ([PR#1107](https://github.com/falcosecurity/falcosidekick/pull/1107) thanks to [@lsroe](https://github.com/lsroe))
+- Fix wrong key format for `Prometheus` format ([PR#1110](https://github.com/falcosecurity/falcosidekick/pull/1110) thanks to [@rubensf](https://github.com/rubensf))
+
+## 2.30.0 - 2024-11-28
+#### New
+- New output: **Webex** ([PR#979](https://github.com/falcosecurity/falcosidekick/pull/979) thanks to [@k0rventen](https://github.com/k0rventen))
+- New output: **OTLP Metrics** ([PR#1012](https://github.com/falcosecurity/falcosidekick/pull/1012) thanks to [@ekoops](https://github.com/ekoops))
+- New output: **Datadog Logs** ([PR#1052](https://github.com/falcosecurity/falcosidekick/pull/1052) thanks to [@yohboy](https://github.com/yohboy))
+
+#### Enhancement
+- Reuse of the http client for 3-4x increase of the throughput ([PR#962](https://github.com/falcosecurity/falcosidekick/pull/962) thanks to [@alekmaus](https://github.com/aleksmaus))
+- Improve outputs throughput handling ([PR#966](https://github.com/falcosecurity/falcosidekick/pull/966) thanks to [@alekmaus](https://github.com/aleksmaus))
+- Batching and gzip compression for the `Elastticsearch` output ([PR#967](https://github.com/falcosecurity/falcosidekick/pull/967) thanks to [@alekmaus](https://github.com/aleksmaus))
+- Use the same convention for the Prometheus metrics than Falco ([PR#995](https://github.com/falcosecurity/falcosidekick/pull/995))
+- Add `APIKey` for `Elasticsearch` output ([PR#980](https://github.com/falcosecurity/falcosidekick/pull/980) thanks to [@alekmaus](https://github.com/aleksmaus))
+- Add `Pipeline` configuration for `Elasticsearch` output ([PR#981](https://github.com/falcosecurity/falcosidekick/pull/981 ) thanks to [@alekmaus](https://github.com/aleksmaus))
+- Add `MessageThreadID` configuration in `Telegram` output ([PR#1008](https://github.com/falcosecurity/falcosidekick/pull/1008) thanks to [@vashian](https://github.com/vashian))
+- Support multi-architecture in build ([PR#1024](https://github.com/falcosecurity/falcosidekick/pull/1024) thanks to [@nickytd](https://github.com/nickytd))
+- Add `falco` as source for the `Datadog Events` ([PR#1043](https://github.com/falcosecurity/falcosidekick/pull/1043) thanks to [@maxd-wttj](https://github.com/maxd-wttj))
+- Support `AlertManager` output in HA mode ([PR#1051](https://github.com/falcosecurity/falcosidekick/pull/1051))
+
+#### Fix
+- Fix `PolicyReports` created in the same namespace than previous event ([PR#978](https://github.com/falcosecurity/falcosidekick/pull/978))
+- Fix missing `customFields/extraFields` in the `Elasticsearch` payload ([PR#1033](https://github.com/falcosecurity/falcosidekick/pull/1033))
+- Fix incorrect key name for `CloudEvent` spec attribute ([PR#1051](https://github.com/falcosecurity/falcosidekick/pull/1051))
+
+> [!WARNING]
+> Breaking change: The Prometheus metrics have different names from this release, it might break the queries for the dashboards and alerts.
+
+## 2.29.0 - 2024-07-01
+#### New
+- New output: **Dynatrace** ([PR#575](https://github.com/falcosecurity/falcosidekick/pull/575) thanks to [@blu3r4y](https://github.com/blu3r4y))
+- New output: **OTLP Traces** ([PR#613](https://github.com/falcosecurity/falcosidekick/pull/613) thanks to [@jjo](https://github.com/jjo))
+- New output: **Sumologic** ([PR#656](https://github.com/falcosecurity/falcosidekick/pull/656) thanks to [@mencarellic](https://github.com/mencarellic))
+- New output: **Quickwit** ([PR#736](https://github.com/falcosecurity/falcosidekick/pull/736) thanks to [@idrissneumann](https://github.com/idrissneumann))
+- New output: **Falco Talon** ([PR#929](https://github.com/falcosecurity/falcosidekick/pull/929))
+
+#### Enhancement
+- Add global TLS config ([PR#588](https://github.com/falcosecurity/falcosidekick/pull/588) thanks to [@ibice](https://github.com/ibice))
+- Add `source` as label for `Prometheus` metrics ([PR#665](https://github.com/falcosecurity/falcosidekick/pull/665))
+- Better logs when TLS is enabled ([PR#668](https://github.com/falcosecurity/falcosidekick/pull/668))
+- Add test for utils sorting function ([PR#694](https://github.com/falcosecurity/falcosidekick/pull/694) thanks to [@stevemcquaid](https://github.com/stevemcquaid))
+- Refactor of the `InitClient` ([PR#765](https://github.com/falcosecurity/falcosidekick/pull/765) thanks to [@idrissneumann](https://github.com/idrissneumann))
+- Allow to use alternative endpoints for the `AWS S3` output ([PR#791](https://github.com/falcosecurity/falcosidekick/pull/791) thanks to [@gysel](https://github.com/gysel))
+- Consistent order for the `output_fields` and `tags` ([PR#802](https://github.com/falcosecurity/falcosidekick/pull/802))
+- Allow to add custom headers for `AlertManager` output ([PR#827](https://github.com/falcosecurity/falcosidekick/pull/827) thanks to [@Umaaz](https://github.com/Umaaz))
+- Add more checks for the `GCP Storage` output ([PR#858](https://github.com/falcosecurity/falcosidekick/pull/858))
+- Possibility to create an index template for the `Elasticsearch` output ([PR#868](https://github.com/falcosecurity/falcosidekick/pull/868))
+- Possibility to "flatten" the `output_fields` (replace `.` by `_`) for the `Elasticsearch` output to avoid mapping conflicts ([PR#868](https://github.com/falcosecurity/falcosidekick/pull/868))
+- Truncate the fields with a length > 512 chars to avoid rejection from some outputs ([PR#871](https://github.com/falcosecurity/falcosidekick/pull/871))
+- Change the license to Apache 2.0 ([PR#882](https://github.com/falcosecurity/falcosidekick/pull/882) thanks to [@leogr](https://github.com/leogr))
+- Revamp the `PolicyReport` output ([PR#899](https://github.com/falcosecurity/falcosidekick/pull/899))
+- New parameter `outputFieldFormat` to modify on the fly the format of the `output` field ([PR#901](https://github.com/falcosecurity/falcosidekick/pull/901))
+
+#### Fix
+- Fix missing root CA for the `Kafka` output ([PR#581](https://github.com/falcosecurity/falcosidekick/pull/581) thanks to [@claviola](https://github.com/claviola))
+- Fix bug with the extension `source` in the `CloudEvent` output ([PR#587](https://github.com/falcosecurity/falcosidekick/pull/587))
+- Fix panics in the `Prometheus` output when `hostname` field is missing ([PR#628](https://github.com/falcosecurity/falcosidekick/pull/628))
+- Remove refs to deprecated `ioutil` modules ([PR#639](https://github.com/falcosecurity/falcosidekick/pull/639) thanks to [@testwill](https://github.com/testwill))
+- Fix locks in the `Loki` output ([PR#647](https://github.com/falcosecurity/falcosidekick/pull/647) thanks to [@bsod90](https://github.com/bsod90))
+- Split the docs for the outputs into multiple files ([PR#648](https://github.com/falcosecurity/falcosidekick/pull/648))
+- Fix mTLS client verification failures due to missing ClientCAs ([PR#666](https://github.com/falcosecurity/falcosidekick/pull/666) thanks to [@jgmartinez](https://github.com/jgmartinez))
+- Fix wrong env var for pagerduty output ([PR#682](https://github.com/falcosecurity/falcosidekick/pull/682))
+- Remove hard settings for usernames in `Mattermost` and `Rocketchat` ([PR#731](https://github.com/falcosecurity/falcosidekick/pull/731))
+- Fix multi lines json in the error lines ([PR#764](https://github.com/falcosecurity/falcosidekick/pull/764) thanks to [@idrissneumann](https://github.com/idrissneumann))
+- Fix duplicated custom headers in clients ([PR#801](https://github.com/falcosecurity/falcosidekick/pull/801), [PR#857](https://github.com/falcosecurity/falcosidekick/pull/857))
+- Fix the labels for the `AlertManager` output ([PR#870](https://github.com/falcosecurity/falcosidekick/pull/870) thanks to [@Umaaz](https://github.com/Umaaz))
+
+## 2.28.0 - 2023-07-18
+#### New
+- New output: **Redis** ([PR#396](https://github.com/falcosecurity/falcosidekick/pull/396) thanks to [@pandyamarut](https://github.com/pandyamarut))
+- New output: **Telegram** ([PR#431](https://github.com/falcosecurity/falcosidekick/pull/431) thanks to [@zufardhiyaulhaq](https://github.com/zufardhiyaulhaq))
+- New output: **N8N** ([PR#462](https://github.com/falcosecurity/falcosidekick/pull/462))
+- New output: **Grafana OnCall** ([PR#470](https://github.com/falcosecurity/falcosidekick/pull/470))
+- New output: **OpenObserve** ([PR#509](https://github.com/falcosecurity/falcosidekick/pull/509))
+
+#### Enhancement
+- Add `output` in the description annotation for `AlertManager` output ([PR#341](https://github.com/falcosecurity/falcosidekick/pull/478))
+- Allow to set the http method for `Webhook` output ([PR#399](https://github.com/falcosecurity/falcosidekick/pull/399))
+- Add `hostname` as prometheus label ([PR#420](https://github.com/falcosecurity/falcosidekick/pull/420) thanks to [@Lowaiz](https://github.com/Lowaiz))
+- Allow to replace the brackets ([PR#421](https://github.com/falcosecurity/falcosidekick/pull/421))
+- Allow to set custom http headers for `Loki`, `Elasticsearch` and `Grafana` outputs ([PR#428](https://github.com/falcosecurity/falcosidekick/pull/428))
+- Add `hostname`, `tags`, `custom` and `templated fields` for `TimescaleDB` output ([PR#438](https://github.com/falcosecurity/falcosidekick/pull/438) thanks to [@hileef](https://github.com/hileef))
+- Allow to set thresholds for the dropped events in `AlertManager` ouput ([PR#439](https://github.com/falcosecurity/falcosidekick/pull/439) thanks to [@Lowaiz](https://github.com/Lowaiz))
+- Match the `priority` with `AlertManager` severity label ([PR#440](https://github.com/falcosecurity/falcosidekick/pull/440) thanks to [@Lowaiz](https://github.com/Lowaiz))
+- Add `rolearn` and `externalid` for the assume role for `AWS` outputs ([PR#494](https://github.com/falcosecurity/falcosidekick/pull/494))
+- Allow to set the `region` for `PagerDuty` output ([PR#500](https://github.com/falcosecurity/falcosidekick/pull/500))
+- Add TLS option + rewrite send method for the `SMTP` output ([PR#502](https://github.com/falcosecurity/falcosidekick/pull/502))
+- Add attributes to `GCP PubSub` messages ([PR#505](https://github.com/falcosecurity/falcosidekick/pull/505) thanks to [@annadorottya](https://github.com/annadorottya))
+- Add option for TLS and mTLS for the server ([PR#508](https://github.com/falcosecurity/falcosidekick/pull/508) thanks to [@annadorottya](https://github.com/annadorottya))
+- Add setting to auto create the `Kafka` topic ([PR#554](https://github.com/falcosecurity/falcosidekick/pull/554))
+- Add option to deploy a HTTP only server for specific endpoints ([PR#565](https://github.com/falcosecurity/falcosidekick/pull/565) thanks to [@annadorottya](https://github.com/annadorottya))
+- Support multiple bootstrap servers for `Kafka` output ([PR#571](https://github.com/falcosecurity/falcosidekick/pull/571) thanks to [@ibice](https://github.com/ibice))
+- Add option for TLS for `Kafka` output ([PR#574](https://github.com/falcosecurity/falcosidekick/pull/574))
+
+#### Fix
+- Fix error handling in `AWS Security Lake` output ([PR#390](https://github.com/falcosecurity/falcosidekick/pull/390))
+- Fix breaking brackets in `AWS SNS` messages ([PR#419](https://github.com/falcosecurity/falcosidekick/pull/419))
+- Fix setting name for the table of `TimescaleDB` output ([PR#426](https://github.com/falcosecurity/falcosidekick/pull/426) thanks to [@alika](https://github.com/alika))
+- Fix cardinality issue with prometheus labels ([PR#427](https://github.com/falcosecurity/falcosidekick/pull/427))
+- Fix panic when assert output fields which are nil ([PR#429](https://github.com/falcosecurity/falcosidekick/pull/429))
+- Fix dependencies for `Wavefront` output ([PR#432](https://github.com/falcosecurity/falcosidekick/pull/432))
+- Fix key pattern for `AWS Security Lake` output ([PR#447](https://github.com/falcosecurity/falcosidekick/pull/447))
+- Fix default settings for `Telegram` output ([PR#495](https://github.com/falcosecurity/falcosidekick/pull/495) thanks to [@schfkt](https://github.com/schfkt))
+- Fix URL generation for `Spyderbat` output ([PR#506](https://github.com/falcosecurity/falcosidekick/pull/506) thanks to [@bc-sb](https://github.com/bc-sb))
+- Fix nil values in `Spyderbat` output ([PR#527](https://github.com/falcosecurity/falcosidekick/pull/527) thanks to [@spider-guy](https://github.com/spider-guy))
+- Fix duplicated headers in `SMTP` output ([PR#528](https://github.com/falcosecurity/falcosidekick/pull/528) thanks to [@apsega](https://github.com/apsega))
+- Fix missing trim for names and values of labels for `AlertManager` output ([PR#563](https://github.com/falcosecurity/falcosidekick/pull/563) thanks to [@Lowaiz](https://github.com/Lowaiz))
+- Fix missing returned errors for `Kafka` output ([PR#573](https://github.com/falcosecurity/falcosidekick/pull/573))
+
 ## 2.27.0 - 2022-12-13
 #### New
 - New output: **Yandex Data Streams** ([PR#336](https://github.com/falcosecurity/falcosidekick/pull/336) thanks to [@preved911](https://github.com/preved911))
-- New output: **Node-Red** ([PR#337](https://github.com/falcosecurity/falcosidekick/pull/337)
-- New output: **MQTT** ([PR#338](https://github.com/falcosecurity/falcosidekick/pull/338)
-- Templated fields: custom fields generated with Go templates ([PR#350](https://github.com/falcosecurity/falcosidekick/pull/350)
-- New output: **Zincsearch** ([PR#360](https://github.com/falcosecurity/falcosidekick/pull/360)
-- New output: **Gotify** ([PR#362](https://github.com/falcosecurity/falcosidekick/pull/362)
+- New output: **Node-Red** ([PR#337](https://github.com/falcosecurity/falcosidekick/pull/337))
+- New output: **MQTT** ([PR#338](https://github.com/falcosecurity/falcosidekick/pull/338))
+- Templated fields: custom fields generated with Go templates ([PR#350](https://github.com/falcosecurity/falcosidekick/pull/350))
+- New output: **Zincsearch** ([PR#360](https://github.com/falcosecurity/falcosidekick/pull/360))
+- New output: **Gotify** ([PR#362](https://github.com/falcosecurity/falcosidekick/pull/362))
 - New output: **Spyderbat** ([PR#368](https://github.com/falcosecurity/falcosidekick/pull/368) thanks to [@spyder-kyle](https://github.com/spyder-kyle))
-- New output: **Tekton** ([PR#371](https://github.com/falcosecurity/falcosidekick/pull/371)
+- New output: **Tekton** ([PR#371](https://github.com/falcosecurity/falcosidekick/pull/371))
 - New output: **TimescaleDB** ([PR#378](https://github.com/falcosecurity/falcosidekick/pull/378) thanks to [@jagretti](https://github.com/jagretti))
-- New output: **AWS Security Lake** ([PR#387](https://github.com/falcosecurity/falcosidekick/pull/387)
+- New output: **AWS Security Lake** ([PR#387](https://github.com/falcosecurity/falcosidekick/pull/387))
 
 #### Enhancement
 - `SMTP` output now uses any SASL auth mechanism ([PR#341](https://github.com/falcosecurity/falcosidekick/pull/341) thanks to [@Lowaiz](https://github.com/Lowaiz))
-- Bind `Policy Reports` to Namespace by `ownerReference` ([PR#346](https://github.com/falcosecurity/falcosidekick/pull/346)
+- Bind `Policy Reports` to Namespace by `ownerReference` ([PR#346](https://github.com/falcosecurity/falcosidekick/pull/346))
 - Add extra labels and annotations for `AlertManager` payloads ([PR#347](https://github.com/falcosecurity/falcosidekick/pull/347) thanks to [@Lowaiz](https://github.com/Lowaiz))
-- Update default type for `Elasticsearch` documents ([PR#349](https://github.com/falcosecurity/falcosidekick/pull/349)
-- Support env vars in custom fields ([PR#353](https://github.com/falcosecurity/falcosidekick/pull/353)
-- Update format + default endpoint for `Loki` output ([PR#356](https://github.com/falcosecurity/falcosidekick/pull/356)
-- Determine resource names + owner ref for `Policy Reports` ([PR#358](https://github.com/falcosecurity/falcosidekick/pull/358)
-- Update `Influxdb` output to use API Token and /api/v2 endpoint ([PR#359](https://github.com/falcosecurity/falcosidekick/pull/359)
-- Allow to override the `Slack` channel ([PR#366](https://github.com/falcosecurity/falcosidekick/pull/366)
-- Add From, To and Date headers in `SMTP` payload ([PR#364](https://github.com/falcosecurity/falcosidekick/pull/364)
-- Improve the check of the payload from `Falco`, it allows now to have an empty output ([PR#372](https://github.com/falcosecurity/falcosidekick/pull/372)
-- Allow to set user and api key for `Loki` output for `Grafana Logs` ([PR#379](https://github.com/falcosecurity/falcosidekick/pull/379)
+- Update default type for `Elasticsearch` documents ([PR#349](https://github.com/falcosecurity/falcosidekick/pull/349))
+- Support env vars in custom fields ([PR#353](https://github.com/falcosecurity/falcosidekick/pull/353))
+- Update format + default endpoint for `Loki` output ([PR#356](https://github.com/falcosecurity/falcosidekick/pull/356))
+- Determine resource names + owner ref for `Policy Reports` ([PR#358](https://github.com/falcosecurity/falcosidekick/pull/358))
+- Update `Influxdb` output to use API Token and /api/v2 endpoint ([PR#359](https://github.com/falcosecurity/falcosidekick/pull/359))
+- Allow to override the `Slack` channel ([PR#366](https://github.com/falcosecurity/falcosidekick/pull/366))
+- Add From, To and Date headers in `SMTP` payload ([PR#364](https://github.com/falcosecurity/falcosidekick/pull/364))
+- Improve the check of the payload from `Falco`, it allows now to have an empty output ([PR#372](https://github.com/falcosecurity/falcosidekick/pull/372))
+- Allow to set user and api key for `Loki` output for `Grafana Logs` ([PR#379](https://github.com/falcosecurity/falcosidekick/pull/379))
 - Add `hostname` in json payload for all outputs ([PR#383](https://github.com/falcosecurity/falcosidekick/pull/383) thanks to [@Lowaiz](https://github.com/Lowaiz))
 - Add SASL authentication for `Kafka` output ([PR#385](https://github.com/falcosecurity/falcosidekick/pull/385) thanks to [@Lowaiz](https://github.com/Lowaiz)) and [@lyoung-confluent](https://github.com/lyoung-confluent))
-- Support CEF format for `Syslog` output ([PR#386](https://github.com/falcosecurity/falcosidekick/pull/386)
-- Allow to disable STS check for `AWS` output ([PR#387](https://github.com/falcosecurity/falcosidekick/pull/387)
+- Support CEF format for `Syslog` output ([PR#386](https://github.com/falcosecurity/falcosidekick/pull/386))
+- Allow to disable STS check for `AWS` output ([PR#387](https://github.com/falcosecurity/falcosidekick/pull/387))
 
 #### Fix
 - Fix `priority` label was replaced by `source` in `AlertManager` payload ([PR#340](https://github.com/falcosecurity/falcosidekick/pull/340) thanks to [@tks98](https://github.com/tks98))
-- Fix missing cert checks + fix inverted logic to use them in codebase ([PR#345](https://github.com/falcosecurity/falcosidekick/pull/345) 
+- Fix missing cert checks + fix inverted logic to use them in codebase ([PR#345](https://github.com/falcosecurity/falcosidekick/pull/345))
 - Fix race condition when headers are added to POST requests ([PR#380](https://github.com/falcosecurity/falcosidekick/pull/380) thanks to [@bc-sb](https://github.com/bc-sb))
 
 ## 2.26.0 - 2022-06-18

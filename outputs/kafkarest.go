@@ -1,11 +1,15 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -36,7 +40,9 @@ func (c *Client) KafkaRestPost(falcopayload types.FalcoPayload) {
 	if err != nil {
 		c.Stats.KafkaRest.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "kafkarest", "status": Error}).Inc()
-		log.Printf("[ERROR] : Kafka Rest - %v - %v\n", "failed to marshalling message", err.Error())
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "kafkarest"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, fmt.Sprintf("failed to marshalling message: %v", err))
 		return
 	}
 
@@ -53,7 +59,9 @@ func (c *Client) KafkaRestPost(falcopayload types.FalcoPayload) {
 		go c.CountMetric(Outputs, 1, []string{"output:kafkarest", "status:error"})
 		c.Stats.KafkaRest.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "kafkarest", "status": Error}).Inc()
-		log.Printf("[ERROR] : Kafka Rest - %v\n", err.Error())
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "kafkarest"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
@@ -61,4 +69,6 @@ func (c *Client) KafkaRestPost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:kafkarest", "status:ok"})
 	c.Stats.KafkaRest.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "kafkarest", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "kafkarest"),
+		attribute.String("status", OK)).Inc()
 }

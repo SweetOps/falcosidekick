@@ -1,21 +1,27 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"fmt"
 	"strconv"
 
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
+	otlpmetrics "github.com/falcosecurity/falcosidekick/outputs/otlp_metrics"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
 // NewOpenfaasClient returns a new output.Client for accessing Kubernetes.
-func NewOpenfaasClient(config *types.Configuration, stats *types.Statistics, promStats *types.PromStatistics, statsdClient, dogstatsdClient *statsd.Client) (*Client, error) {
+func NewOpenfaasClient(config *types.Configuration, stats *types.Statistics, promStats *types.PromStatistics,
+	otlpMetrics *otlpmetrics.OTLPMetrics, statsdClient, dogstatsdClient *statsd.Client) (*Client, error) {
 	if config.Openfaas.Kubeconfig != "" {
 		restConfig, err := clientcmd.BuildConfigFromFlags("", config.Openfaas.Kubeconfig)
 		if err != nil {
@@ -30,22 +36,24 @@ func NewOpenfaasClient(config *types.Configuration, stats *types.Statistics, pro
 			Config:           config,
 			Stats:            stats,
 			PromStats:        promStats,
+			OTLPMetrics:      otlpMetrics,
 			StatsdClient:     statsdClient,
 			DogstatsdClient:  dogstatsdClient,
 			KubernetesClient: clientset,
 		}, nil
 	}
-	return NewClient(
-		Openfaas,
-		"http://"+config.Openfaas.GatewayService+"."+config.Openfaas.GatewayNamespace+":"+strconv.Itoa(config.Openfaas.GatewayPort)+"/function/"+config.Openfaas.FunctionName+"."+config.Openfaas.FunctionNamespace,
-		config.Openfaas.MutualTLS,
-		config.Openfaas.CheckCert,
-		config,
-		stats,
-		promStats,
-		statsdClient,
-		dogstatsdClient,
-	)
+
+	endpointUrl := fmt.Sprintf("http://%s.%s:%d/function/%s.%s", config.Openfaas.GatewayService, config.Openfaas.GatewayNamespace, config.Openfaas.GatewayPort, config.Openfaas.FunctionName, config.Openfaas.FunctionNamespace)
+	initClientArgs := &types.InitClientArgs{
+		Config:          config,
+		Stats:           stats,
+		DogstatsdClient: dogstatsdClient,
+		PromStats:       promStats,
+		OTLPMetrics:     otlpMetrics,
+		StatsdClient:    statsdClient,
+	}
+
+	return NewClient(Openfaas, endpointUrl, config.Openfaas.CommonConfig, *initClientArgs)
 }
 
 // OpenfaasCall .
@@ -65,22 +73,28 @@ func (c *Client) OpenfaasCall(falcopayload types.FalcoPayload) {
 			go c.CountMetric(Outputs, 1, []string{"output:openfaas", "status:error"})
 			c.Stats.Openfaas.Add(Error, 1)
 			c.PromStats.Outputs.With(map[string]string{"destination": "openfaas", "status": Error}).Inc()
-			log.Printf("[ERROR] : %v - %v\n", Openfaas, err)
+			c.OTLPMetrics.Outputs.With(attribute.String("destination", "openfaas"),
+				attribute.String("status", Error)).Inc()
+			utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 			return
 		}
-		log.Printf("[INFO]  : %v - Function Response : %v\n", Openfaas, string(rawbody))
+		utils.Log(utils.InfoLvl, c.OutputType, fmt.Sprintf("Function Response : %v", string(rawbody)))
 	} else {
 		err := c.Post(falcopayload)
 		if err != nil {
 			go c.CountMetric(Outputs, 1, []string{"output:openfaas", "status:error"})
 			c.Stats.Openfaas.Add(Error, 1)
 			c.PromStats.Outputs.With(map[string]string{"destination": "openfaas", "status": Error}).Inc()
-			log.Printf("[ERROR] : %v - %v\n", Openfaas, err)
+			c.OTLPMetrics.Outputs.With(attribute.String("destination", "openfaas"),
+				attribute.String("status", Error)).Inc()
+			utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 			return
 		}
 	}
-	log.Printf("[INFO]  : %v - Call Function \"%v\" OK\n", Openfaas, c.Config.Openfaas.FunctionName+"."+c.Config.Openfaas.FunctionNamespace)
+	utils.Log(utils.InfoLvl, c.OutputType, fmt.Sprintf("Call Function \"%v\" OK", c.Config.Openfaas.FunctionName+"."+c.Config.Openfaas.FunctionNamespace))
 	go c.CountMetric(Outputs, 1, []string{"output:openfaas", "status:ok"})
 	c.Stats.Openfaas.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "openfaas", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "openfaas"),
+		attribute.String("status", OK)).Inc()
 }

@@ -1,10 +1,15 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"fmt"
-	"log"
+	"sort"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -56,20 +61,10 @@ func newDiscordPayload(falcopayload types.FalcoPayload, config *types.Configurat
 		color = "12370112" // light grey
 	}
 
-	embeds := make([]discordEmbedPayload, 0)
+	embeds := make([]discordEmbedPayload, 0, 1)
 
 	embedFields := make([]discordEmbedFieldPayload, 0)
 	var embedField discordEmbedFieldPayload
-
-	for i, j := range falcopayload.OutputFields {
-		switch v := j.(type) {
-		case string:
-			embedField = discordEmbedFieldPayload{i, fmt.Sprintf("```%s```", v), true}
-		default:
-			continue
-		}
-		embedFields = append(embedFields, embedField)
-	}
 
 	embedFields = append(embedFields, discordEmbedFieldPayload{Rule, falcopayload.Rule, true})
 	embedFields = append(embedFields, discordEmbedFieldPayload{Priority, falcopayload.Priority.String(), true})
@@ -77,7 +72,13 @@ func newDiscordPayload(falcopayload types.FalcoPayload, config *types.Configurat
 	if falcopayload.Hostname != "" {
 		embedFields = append(embedFields, discordEmbedFieldPayload{Hostname, falcopayload.Hostname, true})
 	}
+
+	for _, i := range getSortedStringKeys(falcopayload.OutputFields) {
+		embedField = discordEmbedFieldPayload{i, fmt.Sprintf("```%v```", falcopayload.OutputFields[i]), true}
+		embedFields = append(embedFields, embedField)
+	}
 	if len(falcopayload.Tags) != 0 {
+		sort.Strings(falcopayload.Tags)
 		embedFields = append(embedFields, discordEmbedFieldPayload{Tags, strings.Join(falcopayload.Tags, ", "), true})
 	}
 	embedFields = append(embedFields, discordEmbedFieldPayload{Time, falcopayload.Time.String(), true})
@@ -106,7 +107,9 @@ func (c *Client) DiscordPost(falcopayload types.FalcoPayload) {
 		go c.CountMetric(Outputs, 1, []string{"output:discord", "status:error"})
 		c.Stats.Discord.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "discord", "status": Error}).Inc()
-		log.Printf("[ERROR] : Discord - %v\n", err)
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "discord"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
@@ -114,4 +117,6 @@ func (c *Client) DiscordPost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:discord", "status:ok"})
 	c.Stats.Discord.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "discord", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "discord"),
+		attribute.String("status", OK)).Inc()
 }

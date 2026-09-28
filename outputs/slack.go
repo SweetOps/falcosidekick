@@ -1,10 +1,16 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"bytes"
-	"log"
+	"fmt"
+	"sort"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -37,7 +43,6 @@ type slackPayload struct {
 func newSlackPayload(falcopayload types.FalcoPayload, config *types.Configuration) slackPayload {
 	var (
 		messageText string
-		attachments []slackAttachment
 		attachment  slackAttachment
 		fields      []slackAttachmentField
 		field       slackAttachmentField
@@ -62,6 +67,7 @@ func newSlackPayload(falcopayload types.FalcoPayload, config *types.Configuratio
 			fields = append(fields, field)
 		}
 		if len(falcopayload.Tags) != 0 {
+			sort.Strings(falcopayload.Tags)
 			field.Title = Tags
 			field.Value = strings.Join(falcopayload.Tags, ", ")
 			field.Short = true
@@ -99,7 +105,7 @@ func newSlackPayload(falcopayload types.FalcoPayload, config *types.Configuratio
 	if config.Slack.MessageFormatTemplate != nil {
 		buf := &bytes.Buffer{}
 		if err := config.Slack.MessageFormatTemplate.Execute(buf, falcopayload); err != nil {
-			log.Printf("[ERROR] : Slack - Error expanding Slack message %v", err)
+			utils.Log(utils.ErrorLvl, "Slack", fmt.Sprintf("Error expanding Slack message: %v", err))
 		} else {
 			messageText = buf.String()
 		}
@@ -126,13 +132,11 @@ func newSlackPayload(falcopayload types.FalcoPayload, config *types.Configuratio
 	}
 	attachment.Color = color
 
-	attachments = append(attachments, attachment)
-
 	s := slackPayload{
 		Text:        messageText,
 		Username:    config.Slack.Username,
 		IconURL:     config.Slack.Icon,
-		Attachments: attachments}
+		Attachments: []slackAttachment{attachment}}
 
 	if config.Slack.Channel != "" {
 		s.Channel = config.Slack.Channel
@@ -150,7 +154,9 @@ func (c *Client) SlackPost(falcopayload types.FalcoPayload) {
 		go c.CountMetric(Outputs, 1, []string{"output:slack", "status:error"})
 		c.Stats.Slack.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "slack", "status": Error}).Inc()
-		log.Printf("[ERROR] : Slack - %v\n", err)
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "slack"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
@@ -158,4 +164,5 @@ func (c *Client) SlackPost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:slack", "status:ok"})
 	c.Stats.Slack.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "slack", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "slack"), attribute.String("status", OK)).Inc()
 }

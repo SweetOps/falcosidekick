@@ -1,10 +1,16 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"bytes"
-	"log"
+	"fmt"
+	"sort"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -43,7 +49,7 @@ func newGooglechatPayload(falcopayload types.FalcoPayload, config *types.Configu
 	if config.Googlechat.MessageFormatTemplate != nil {
 		buf := &bytes.Buffer{}
 		if err := config.Googlechat.MessageFormatTemplate.Execute(buf, falcopayload); err != nil {
-			log.Printf("[ERROR] : GoogleChat - Error expanding Google Chat message %v", err)
+			utils.Log(utils.ErrorLvl, "GoogleChat", fmt.Sprintf("Error expanding Google Chat message: %v", err))
 		} else {
 			messageText = buf.String()
 		}
@@ -55,6 +61,13 @@ func newGooglechatPayload(falcopayload types.FalcoPayload, config *types.Configu
 		}
 	}
 
+	widgets = append(widgets, widget{KeyValue: keyValue{"rule", falcopayload.Rule}})
+	widgets = append(widgets, widget{KeyValue: keyValue{"priority", falcopayload.Priority.String()}})
+	widgets = append(widgets, widget{KeyValue: keyValue{"source", falcopayload.Source}})
+	if falcopayload.Hostname != "" {
+		widgets = append(widgets, widget{KeyValue: keyValue{Hostname, falcopayload.Hostname}})
+	}
+
 	for _, i := range getSortedStringKeys(falcopayload.OutputFields) {
 		widgets = append(widgets, widget{
 			KeyValue: keyValue{
@@ -64,15 +77,8 @@ func newGooglechatPayload(falcopayload types.FalcoPayload, config *types.Configu
 		})
 	}
 
-	widgets = append(widgets, widget{KeyValue: keyValue{"rule", falcopayload.Rule}})
-	widgets = append(widgets, widget{KeyValue: keyValue{"priority", falcopayload.Priority.String()}})
-	widgets = append(widgets, widget{KeyValue: keyValue{"source", falcopayload.Source}})
-
-	if falcopayload.Hostname != "" {
-		widgets = append(widgets, widget{KeyValue: keyValue{Hostname, falcopayload.Hostname}})
-	}
-
 	if len(falcopayload.Tags) != 0 {
+		sort.Strings(falcopayload.Tags)
 		widgets = append(widgets, widget{
 			KeyValue: keyValue{
 				TopLabel: "tags",
@@ -104,11 +110,15 @@ func (c *Client) GooglechatPost(falcopayload types.FalcoPayload) {
 		go c.CountMetric(Outputs, 1, []string{"output:googlechat", "status:error"})
 		c.Stats.GoogleChat.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "googlechat", "status": Error}).Inc()
-		log.Printf("[ERROR] : GoogleChat - %v\n", err)
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "googlechat"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
 	go c.CountMetric(Outputs, 1, []string{"output:googlechat", "status:ok"})
 	c.Stats.GoogleChat.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "googlechat", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "googlechat"),
+		attribute.String("status", OK)).Inc()
 }

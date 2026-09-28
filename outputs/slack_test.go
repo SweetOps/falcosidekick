@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
@@ -44,7 +46,7 @@ func TestNewSlackPayload(t *testing.T) {
 					},
 					{
 						Title: "tags",
-						Value: "test, example",
+						Value: "example, test",
 						Short: true,
 					},
 					{

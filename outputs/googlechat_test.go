@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
@@ -18,12 +20,6 @@ func TestNewGoogleChatPayload(t *testing.T) {
 				Sections: []section{
 					{
 						Widgets: []widget{
-							{
-								keyValue{
-									TopLabel: "proc.name",
-									Content:  "falcosidekick",
-								},
-							},
 							{
 								keyValue{
 									TopLabel: "rule",
@@ -50,8 +46,14 @@ func TestNewGoogleChatPayload(t *testing.T) {
 							},
 							{
 								keyValue{
+									TopLabel: "proc.name",
+									Content:  "falcosidekick",
+								},
+							},
+							{
+								keyValue{
 									TopLabel: "tags",
-									Content:  "test, example",
+									Content:  "example, test",
 								},
 							},
 							{

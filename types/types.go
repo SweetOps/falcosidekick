@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package types
 
 import (
@@ -7,8 +9,11 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/DataDog/datadog-go/statsd"
 	"github.com/embano1/memlog"
 	"github.com/prometheus/client_golang/prometheus"
+
+	otlpmetrics "github.com/falcosecurity/falcosidekick/outputs/otlp_metrics"
 )
 
 // FalcoPayload is a struct to map falco event json
@@ -22,6 +27,23 @@ type FalcoPayload struct {
 	Source       string                 `json:"source"`
 	Tags         []string               `json:"tags,omitempty"`
 	Hostname     string                 `json:"hostname,omitempty"`
+}
+
+// DeepCopy returns a deep copy of the FalcoPayload, duplicating the OutputFields
+// map and Tags slice so concurrent goroutines can safely read without racing.
+func (f FalcoPayload) DeepCopy() FalcoPayload {
+	c := f
+	if f.OutputFields != nil {
+		c.OutputFields = make(map[string]interface{}, len(f.OutputFields))
+		for k, v := range f.OutputFields {
+			c.OutputFields[k] = v
+		}
+	}
+	if f.Tags != nil {
+		c.Tags = make([]string, len(f.Tags))
+		copy(c.Tags, f.Tags)
+	}
+	return c
 }
 
 func (f FalcoPayload) String() string {
@@ -48,10 +70,16 @@ func (f FalcoPayload) Check() bool {
 // Configuration is a struct to store configuration
 type Configuration struct {
 	MutualTLSFilesPath string
+	MutualTLSClient    MutualTLSClient
+	TLSClient          TLSClient
+	TLSServer          TLSServer
 	Debug              bool
 	ListenAddress      string
 	ListenPort         int
+	BracketReplacer    string
+	OutputFieldFormat  string
 	Customfields       map[string]string
+	Customtags         []string
 	Templatedfields    map[string]string
 	Prometheus         prometheusOutputConfig
 	Slack              SlackOutputConfig
@@ -59,12 +87,16 @@ type Configuration struct {
 	Mattermost         MattermostOutputConfig
 	Rocketchat         RocketchatOutputConfig
 	Teams              teamsOutputConfig
+	Webex              WebexOutputConfig
 	Datadog            datadogOutputConfig
+	DatadogLogs        datadogLogsOutputConfig
 	Discord            DiscordOutputConfig
 	Alertmanager       AlertmanagerOutputConfig
-	Elasticsearch      elasticsearchOutputConfig
+	Elasticsearch      ElasticsearchOutputConfig
+	Quickwit           QuickwitOutputConfig
 	Influxdb           influxdbOutputConfig
-	Loki               lokiOutputConfig
+	Loki               LokiOutputConfig
+	SumoLogic          SumoLogicOutputConfig
 	Nats               natsOutputConfig
 	Stan               stanOutputConfig
 	AWS                awsOutputConfig
@@ -75,7 +107,7 @@ type Configuration struct {
 	Webhook            WebhookOutputConfig
 	CloudEvents        CloudEventsOutputConfig
 	Azure              azureConfig
-	GCP                gcpOutputConfig
+	GCP                GcpOutputConfig
 	Googlechat         GooglechatConfig
 	Kafka              kafkaConfig
 	KafkaRest          KafkaRestConfig
@@ -88,7 +120,8 @@ type Configuration struct {
 	Rabbitmq           RabbitmqConfig
 	Wavefront          WavefrontOutputConfig
 	Fission            fissionConfig
-	Grafana            grafanaOutputConfig
+	Grafana            GrafanaOutputConfig
+	GrafanaOnCall      GrafanaOnCallOutputConfig
 	Yandex             YandexOutputConfig
 	Syslog             SyslogConfig
 	NodeRed            NodeRedOutputConfig
@@ -98,10 +131,58 @@ type Configuration struct {
 	Spyderbat          SpyderbatConfig
 	TimescaleDB        TimescaleDBConfig
 	Redis              RedisConfig
+	Telegram           TelegramConfig
+	N8N                N8NConfig
+	OpenObserve        OpenObserveConfig
+	Dynatrace          DynatraceOutputConfig
+	OTLP               OTLPOutputConfig
+	Talon              TalonOutputConfig
+	Logstash           LogstashConfig
+	Splunk             SplunkOutputConfig
+}
+
+// InitClientArgs represent a client parameters for initialization
+type InitClientArgs struct {
+	Config          *Configuration
+	Stats           *Statistics
+	PromStats       *PromStatistics
+	OTLPMetrics     *otlpmetrics.OTLPMetrics
+	StatsdClient    *statsd.Client
+	DogstatsdClient *statsd.Client
+}
+
+// MutualTLSClient represents parameters for mutual TLS as client
+type MutualTLSClient struct {
+	CertFile   string
+	KeyFile    string
+	CaCertFile string
+}
+
+// MutualTLSClient represents parameters for global TLS client options
+type TLSClient struct {
+	CaCertFile string
+}
+
+// TLSServer represents parameters for TLS Server
+type TLSServer struct {
+	Deploy     bool
+	CertFile   string
+	KeyFile    string
+	MutualTLS  bool
+	CaCertFile string
+	NoTLSPort  int
+	NoTLSPaths []string
+}
+
+type CommonConfig struct {
+	CheckCert             bool
+	MutualTLS             bool
+	MaxConcurrentRequests uint16 // Max concurrent requests at a time, unlimited if 0
 }
 
 // SlackOutputConfig represents parameters for Slack
 type SlackOutputConfig struct {
+	CommonConfig          `mapstructure:",squash"`
 	WebhookURL            string
 	Channel               string
 	Footer                string
@@ -111,12 +192,11 @@ type SlackOutputConfig struct {
 	MinimumPriority       string
 	MessageFormat         string
 	MessageFormatTemplate *template.Template
-	CheckCert             bool
-	MutualTLS             bool
 }
 
 // CliqOutputConfig represents parameters for Zoho Cliq
 type CliqOutputConfig struct {
+	CommonConfig          `mapstructure:",squash"`
 	WebhookURL            string
 	Icon                  string
 	OutputFormat          string
@@ -124,12 +204,11 @@ type CliqOutputConfig struct {
 	MessageFormat         string
 	MessageFormatTemplate *template.Template
 	UseEmoji              bool
-	CheckCert             bool
-	MutualTLS             bool
 }
 
 // RocketchatOutputConfig .
 type RocketchatOutputConfig struct {
+	CommonConfig          `mapstructure:",squash"`
 	WebhookURL            string
 	Footer                string
 	Icon                  string
@@ -138,12 +217,11 @@ type RocketchatOutputConfig struct {
 	MinimumPriority       string
 	MessageFormat         string
 	MessageFormatTemplate *template.Template
-	CheckCert             bool
-	MutualTLS             bool
 }
 
 // MattermostOutputConfig represents parameters for Mattermost
 type MattermostOutputConfig struct {
+	CommonConfig          `mapstructure:",squash"`
 	WebhookURL            string
 	Footer                string
 	Icon                  string
@@ -152,8 +230,6 @@ type MattermostOutputConfig struct {
 	MinimumPriority       string
 	MessageFormat         string
 	MessageFormatTemplate *template.Template
-	CheckCert             bool
-	MutualTLS             bool
 }
 
 type WavefrontOutputConfig struct {
@@ -168,55 +244,106 @@ type WavefrontOutputConfig struct {
 }
 
 type teamsOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	WebhookURL      string
 	ActivityImage   string
 	OutputFormat    string
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
+}
+
+type WebexOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
+	WebhookURL      string
+	MinimumPriority string
 }
 
 type datadogOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	APIKey          string
 	Host            string
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
+}
+
+type datadogLogsOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
+	APIKey          string
+	Host            string
+	MinimumPriority string
+	Service         string
 }
 
 // DiscordOutputConfig .
 type DiscordOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	WebhookURL      string
 	MinimumPriority string
 	Icon            string
-	CheckCert       bool
-	MutualTLS       bool
+}
+
+type ThresholdConfig struct {
+	Value    int64        `json:"value" yaml:"value"`
+	Priority PriorityType `json:"priority" yaml:"priority"`
 }
 
 type AlertmanagerOutputConfig struct {
-	HostPort         string
-	MinimumPriority  string
-	CheckCert        bool
-	MutualTLS        bool
-	Endpoint         string
-	ExpiresAfter     int
-	ExtraLabels      map[string]string
-	ExtraAnnotations map[string]string
+	CommonConfig             `mapstructure:",squash"`
+	HostPort                 []string
+	MinimumPriority          string
+	Endpoint                 string
+	ExpiresAfter             int
+	ExtraLabels              map[string]string
+	ExtraAnnotations         map[string]string
+	CustomSeverityMap        map[PriorityType]string
+	DropEventThresholds      string
+	DropEventThresholdsList  []ThresholdConfig
+	DropEventDefaultPriority string
+	CustomHeaders            map[string]string
 }
 
-type elasticsearchOutputConfig struct {
+const (
+	DefaultBatchSize     = 5 * 1024 * 1024 // 5 MB
+	DefaultFlushInterval = time.Second
+)
+
+type BatchingConfig struct {
+	Enabled       bool          `json:"enabled" yaml:"enabled"`
+	BatchSize     int           `json:"batchsize" yaml:"batchsize"`
+	FlushInterval time.Duration `json:"flushinterval" yaml:"flushinterval"`
+}
+
+type ElasticsearchOutputConfig struct {
+	CommonConfig        `mapstructure:",squash"`
+	HostPort            string
+	Index               string
+	Type                string
+	Pipeline            string
+	MinimumPriority     string
+	Suffix              string
+	Username            string
+	Password            string
+	ApiKey              string
+	FlattenFields       bool
+	CreateIndexTemplate bool
+	NumberOfShards      int
+	NumberOfReplicas    int
+	CustomHeaders       map[string]string
+	Batching            BatchingConfig
+	EnableCompression   bool
+}
+
+type QuickwitOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	HostPort        string
+	ApiEndpoint     string
 	Index           string
-	Type            string
+	Version         string
+	CustomHeaders   map[string]string
 	MinimumPriority string
-	Suffix          string
-	Username        string
-	Password        string
-	CheckCert       bool
-	MutualTLS       bool
+	AutoCreateIndex bool
 }
 
 type influxdbOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	HostPort        string
 	Database        string
 	Organization    string
@@ -226,21 +353,29 @@ type influxdbOutputConfig struct {
 	Password        string
 	Token           string
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
 }
 
-type lokiOutputConfig struct {
+type LokiOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	HostPort        string
 	User            string
 	APIKey          string
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
 	Tenant          string
+	Format          string
 	Endpoint        string
 	ExtraLabels     string
 	ExtraLabelsList []string
+	CustomHeaders   map[string]string
+}
+
+type SumoLogicOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
+	MinimumPriority string
+	ReceiverURL     string
+	SourceCategory  string
+	SourceHost      string
+	Name            string
 }
 
 type prometheusOutputConfig struct {
@@ -249,25 +384,27 @@ type prometheusOutputConfig struct {
 }
 
 type natsOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	HostPort        string
+	SubjectTemplate string
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
 }
 
 type stanOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	HostPort        string
 	ClusterID       string
 	ClientID        string
+	SubjectTemplate string
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
 }
 
 type awsOutputConfig struct {
 	Region          string
 	AccessKeyID     string
 	SecretAccessKey string
+	RoleARN         string
+	ExternalID      string
 	CheckIdentity   bool
 	Lambda          awsLambdaConfig
 	SQS             awsSQSConfig
@@ -306,6 +443,8 @@ type awsS3Config struct {
 	Prefix          string
 	Bucket          string
 	MinimumPriority string
+	Endpoint        string
+	ObjectCannedACL string
 }
 
 type awsKinesisConfig struct {
@@ -329,6 +468,7 @@ type awsSecurityLakeConfig struct {
 
 type smtpOutputConfig struct {
 	HostPort        string
+	TLS             bool
 	AuthMechanism   string
 	User            string
 	Password        string
@@ -342,39 +482,46 @@ type smtpOutputConfig struct {
 }
 
 type opsgenieOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	Region          string
 	APIKey          string
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
 }
 
 // WebhookOutputConfig represents parameters for Webhook
 type WebhookOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	Address         string
+	Method          string
 	CustomHeaders   map[string]string
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
+}
+
+// SplunkOutputConfig represents parameters for Splunk
+type SplunkOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
+	Host            string
+	CustomHeaders   map[string]string
+	Token           string
+	MinimumPriority string
 }
 
 // NodeRedOutputConfig represents parameters for Node-RED
 type NodeRedOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	Address         string
 	User            string
 	Password        string
 	CustomHeaders   map[string]string
 	MinimumPriority string
-	CheckCert       bool
 }
 
 // CloudEventsOutputConfig represents parameters for CloudEvents
 type CloudEventsOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	Address         string
 	Extensions      map[string]string
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
 }
 
 type statsdOutputConfig struct {
@@ -399,13 +546,14 @@ type gcpCloudRun struct {
 	MinimumPriority string
 }
 
-type gcpOutputConfig struct {
+type GcpOutputConfig struct {
 	Credentials      string
 	WorkloadIdentity bool
-	PubSub           gcpPubSub
+	PubSub           GcpPubSub
 	Storage          gcpStorage
 	CloudFunctions   gcpCloudFunctions
 	CloudRun         gcpCloudRun
+	Chronicle        gcpChronicle
 }
 
 type gcpCloudFunctions struct {
@@ -413,10 +561,11 @@ type gcpCloudFunctions struct {
 	MinimumPriority string
 }
 
-type gcpPubSub struct {
-	ProjectID       string
-	Topic           string
-	MinimumPriority string
+type GcpPubSub struct {
+	ProjectID        string
+	Topic            string
+	MinimumPriority  string
+	CustomAttributes map[string]string
 }
 
 type gcpStorage struct {
@@ -425,15 +574,22 @@ type gcpStorage struct {
 	MinimumPriority string
 }
 
+type gcpChronicle struct {
+	MinimumPriority string
+	Region          string
+	ProjectID       string
+	InstanceID      string
+	LogType         string
+}
+
 // GooglechatConfig represents parameters for Google chat
 type GooglechatConfig struct {
+	CommonConfig          `mapstructure:",squash"`
 	WebhookURL            string
 	OutputFormat          string
 	MinimumPriority       string
 	MessageFormat         string
 	MessageFormatTemplate *template.Template
-	CheckCert             bool
-	MutualTLS             bool
 }
 
 type kafkaConfig struct {
@@ -441,6 +597,7 @@ type kafkaConfig struct {
 	Topic           string
 	MinimumPriority string
 	SASL            string
+	TLS             bool
 	Username        string
 	Password        string
 	Balancer        string
@@ -448,34 +605,34 @@ type kafkaConfig struct {
 	Compression     string
 	Async           bool
 	RequiredACKs    string
+	TopicCreation   bool
 }
 
 type KafkaRestConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	Address         string
 	Version         int
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
 }
 
 type PagerdutyConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	RoutingKey      string
+	Region          string
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
 }
 
 type kubelessConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	Namespace       string
 	Function        string
 	Port            int
 	Kubeconfig      string
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
 }
 
 type openfaasConfig struct {
+	CommonConfig      `mapstructure:",squash"`
 	GatewayNamespace  string
 	GatewayService    string
 	FunctionName      string
@@ -483,22 +640,18 @@ type openfaasConfig struct {
 	GatewayPort       int
 	Kubeconfig        string
 	MinimumPriority   string
-	CheckCert         bool
-	MutualTLS         bool
 }
 
 type tektonConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	EventListener   string
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
 }
 
 // WebUIOutputConfig represents parameters for WebUI
 type WebUIOutputConfig struct {
-	URL       string
-	CheckCert bool
-	MutualTLS bool
+	CommonConfig `mapstructure:",squash"`
+	URL          string
 }
 
 // PolicyReportConfig represents parameters for policyreport
@@ -506,6 +659,7 @@ type PolicyReportConfig struct {
 	Enabled         bool
 	PruneByPriority bool
 	Kubeconfig      string
+	FalcoNamespace  string
 	MinimumPriority string
 	MaxEvents       int
 }
@@ -517,16 +671,24 @@ type RabbitmqConfig struct {
 	MinimumPriority string
 }
 
-// grafanaOutputConfig represents parameters for Grafana
-type grafanaOutputConfig struct {
+// GrafanaOutputConfig represents parameters for Grafana
+type GrafanaOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	HostPort        string
 	APIKey          string
 	DashboardID     int
 	PanelID         int
 	AllFieldsAsTags bool
-	CheckCert       bool
-	MutualTLS       bool
 	MinimumPriority string
+	CustomHeaders   map[string]string
+}
+
+// GrafanaOnCallOutputConfig represents parameters for Grafana OnCall
+type GrafanaOnCallOutputConfig struct {
+	CommonConfig    `mapstructure:",squash"`
+	WebhookURL      string
+	MinimumPriority string
+	CustomHeaders   map[string]string
 }
 
 type YandexOutputConfig struct {
@@ -574,14 +736,13 @@ type MQTTConfig struct {
 
 // fissionConfig represents config parameters for Fission
 type fissionConfig struct {
+	CommonConfig    `mapstructure:",squash"`
 	RouterNamespace string
 	RouterService   string
 	RouterPort      int
 	Function        string
 	KubeConfig      string
 	MinimumPriority string
-	CheckCert       bool
-	MutualTLS       bool
 }
 
 // zincsearchOutputConfig represents config parameters for Zincsearch
@@ -625,6 +786,7 @@ type TimescaleDBConfig struct {
 // RedisConfig represents config parameters for Redis
 type RedisConfig struct {
 	Address         string
+	Username        string
 	Password        string
 	Database        int
 	StorageType     string
@@ -632,7 +794,106 @@ type RedisConfig struct {
 	Version         int
 	MinimumPriority string
 	CheckCert       bool
+	TLS             bool
 	MutualTLS       bool
+	CertFile        string
+	KeyFile         string
+	CaCertFile      string
+}
+
+// TelegramConfig represents parameters for Telegram
+type TelegramConfig struct {
+	Host            string
+	Token           string
+	ChatID          string
+	MinimumPriority string
+	CheckCert       bool
+	MessageThreadID string
+}
+
+// N8NConfig represents config parameters for N8N
+type N8NConfig struct {
+	Address         string
+	User            string
+	Password        string
+	HeaderAuthName  string
+	HeaderAuthValue string
+	MinimumPriority string
+	CheckCert       bool
+}
+
+type DynatraceOutputConfig struct {
+	APIToken        string
+	APIUrl          string
+	MinimumPriority string
+	CheckCert       bool
+}
+
+// OpenObserveConfig represents config parameters for OpenObserve
+type OpenObserveConfig struct {
+	CommonConfig     `mapstructure:",squash"`
+	HostPort         string
+	OrganizationName string
+	StreamName       string
+	MinimumPriority  string
+	Username         string
+	Password         string
+	CustomHeaders    map[string]string
+}
+
+// OTLPTraces represents config parameters for OTLP Traces
+type OTLPTraces struct {
+	Endpoint        string
+	Protocol        string
+	Timeout         int64
+	Headers         string
+	Duration        int64
+	Synced          bool
+	ExtraEnvVars    map[string]string
+	TLS             bool
+	CheckCert       bool
+	MinimumPriority string
+}
+
+// OTLPLogs represents config parameters for OTLP Logs
+type OTLPLogs struct {
+	Endpoint        string
+	Protocol        string
+	Timeout         int64
+	Synced          bool
+	Headers         string
+	ExtraEnvVars    map[string]string
+	TLS             bool
+	CheckCert       bool
+	MinimumPriority string
+}
+
+// OTLPOutputConfig represents config parameters for OTLP
+type OTLPOutputConfig struct {
+	Traces  OTLPTraces
+	Metrics otlpmetrics.Config
+	Logs    OTLPLogs
+}
+
+// TalonOutputConfig represents parameters for Talon
+type TalonOutputConfig struct {
+	Address         string
+	CheckCert       bool
+	MinimumPriority string
+}
+
+// LogstashConfig represents config parameters for Logstash
+type LogstashConfig struct {
+	Address         string
+	Port            uint64
+	MinimumPriority string
+	CheckCert       bool
+	TLS             bool
+	MutualTLS       bool
+	CertFile        string
+	KeyFile         string
+	CaCertFile      string
+	Tags            []string
 }
 
 // Statistics is a struct to store stastics
@@ -646,10 +907,13 @@ type Statistics struct {
 	Rocketchat        *expvar.Map
 	Teams             *expvar.Map
 	Datadog           *expvar.Map
+	DatadogLogs       *expvar.Map
 	Discord           *expvar.Map
 	Alertmanager      *expvar.Map
 	Elasticsearch     *expvar.Map
+	Quickwit          *expvar.Map
 	Loki              *expvar.Map
+	SumoLogic         *expvar.Map
 	Nats              *expvar.Map
 	Stan              *expvar.Map
 	Influxdb          *expvar.Map
@@ -665,6 +929,7 @@ type Statistics struct {
 	Statsd            *expvar.Map
 	Dogstatsd         *expvar.Map
 	Webhook           *expvar.Map
+	Webex             *expvar.Map
 	AzureEventHub     *expvar.Map
 	GCPPubSub         *expvar.Map
 	GCPStorage        *expvar.Map
@@ -683,6 +948,7 @@ type Statistics struct {
 	Wavefront         *expvar.Map
 	Fission           *expvar.Map
 	Grafana           *expvar.Map
+	GrafanaOnCall     *expvar.Map
 	YandexS3          *expvar.Map
 	YandexDataStreams *expvar.Map
 	Syslog            *expvar.Map
@@ -695,6 +961,17 @@ type Statistics struct {
 	Spyderbat         *expvar.Map
 	TimescaleDB       *expvar.Map
 	Redis             *expvar.Map
+	Telegram          *expvar.Map
+	N8N               *expvar.Map
+	OpenObserve       *expvar.Map
+	Dynatrace         *expvar.Map
+	OTLPTraces        *expvar.Map
+	OTLPMetrics       *expvar.Map
+	OTLPLogs          *expvar.Map
+	Talon             *expvar.Map
+	Logstash          *expvar.Map
+	Splunk            *expvar.Map
+	GCPChronicle      *expvar.Map
 }
 
 // PromStatistics is a struct to store prometheus metrics

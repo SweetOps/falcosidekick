@@ -1,26 +1,41 @@
-run:
-  deadline: 5m
-  skip-files:
-  - "zz_generated.*\\.go$"
+version: "2"
 linters:
-  disable-all: true
+  default: none
   enable:
-    - deadcode
     - goconst
-    - gofmt
     - gosec
     - govet
     - ineffassign
     - misspell
     - nakedret
     - prealloc
-    - structcheck
     - unconvert
-    - varcheck
-  # Run with --fast=false for more extensive checks
-  fast: true
-  include:
-  - EXC0002 # include "missing comments" issues from golint
-  max-issues-per-linter: 0
-  max-same-issues: 0
-  
+    - unused
+  settings:
+    gosec:
+      excludes:
+        - G115
+        - G117
+        - G704
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - zz_generated.*\.go$
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax
+    paths:
+      - zz_generated.*\.go$
+      - third_party$
+      - builtin$
+      - examples$

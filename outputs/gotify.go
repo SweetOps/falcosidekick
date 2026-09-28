@@ -1,12 +1,17 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
 	"bytes"
 	"encoding/json"
-	"log"
+	"net/http"
 	"strings"
 	textTemplate "text/template"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -71,7 +76,7 @@ func newGotifyPayload(falcopayload types.FalcoPayload, config *types.Configurati
 		err = ttmpl.Execute(&outtext, falcopayload)
 	}
 	if err != nil {
-		log.Printf("[ERROR] : Gotify - %v\n", err)
+		utils.Log(utils.ErrorLvl, "Gotify", err.Error())
 		return g
 	}
 
@@ -91,16 +96,14 @@ func newGotifyPayload(falcopayload types.FalcoPayload, config *types.Configurati
 func (c *Client) GotifyPost(falcopayload types.FalcoPayload) {
 	c.Stats.Gotify.Add(Total, 1)
 
-	if c.Config.Gotify.Token != "" {
-		c.httpClientLock.Lock()
-		defer c.httpClientLock.Unlock()
-		c.AddHeader("X-Gotify-Key", c.Config.Gotify.Token)
-	}
-
-	err := c.Post(newGotifyPayload(falcopayload, c.Config))
+	err := c.Post(newGotifyPayload(falcopayload, c.Config), func(req *http.Request) {
+		if c.Config.Gotify.Token != "" {
+			req.Header.Set("X-Gotify-Key", c.Config.Gotify.Token)
+		}
+	})
 	if err != nil {
 		c.setGotifyErrorMetrics()
-		log.Printf("[ERROR] : Gotify - %v\n", err)
+		utils.Log(utils.ErrorLvl, "Gotify", err.Error())
 		return
 	}
 
@@ -108,6 +111,7 @@ func (c *Client) GotifyPost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:gotify", "status:ok"})
 	c.Stats.Gotify.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "gotify", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "gotify"), attribute.String("status", OK)).Inc()
 }
 
 // setGotifyErrorMetrics set the error stats
@@ -115,4 +119,6 @@ func (c *Client) setGotifyErrorMetrics() {
 	go c.CountMetric(Outputs, 1, []string{"output:gotify", "status:error"})
 	c.Stats.Gotify.Add(Error, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "gotify", "status": Error}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "gotify"),
+		attribute.String("status", Error)).Inc()
 }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
@@ -16,15 +18,11 @@ func TestNewTeamsPayload(t *testing.T) {
 		ThemeColor: "ccfff2",
 		Sections: []teamsSection{
 			{
-				ActivityTitle:    "Falco Sidekick",
+				ActivityTitle:    "Falcosidekick",
 				ActivitySubTitle: "2001-01-01 01:10:00 +0000 UTC",
 				ActivityImage:    "",
 				Text:             "This is a test from falcosidekick",
 				Facts: []teamsFact{
-					{
-						Name:  "proc.name",
-						Value: "falcosidekick",
-					},
 					{
 						Name:  "rule",
 						Value: "Test rule",
@@ -42,8 +40,12 @@ func TestNewTeamsPayload(t *testing.T) {
 						Value: "test-host",
 					},
 					{
+						Name:  "proc.name",
+						Value: "falcosidekick",
+					},
+					{
 						Name:  "tags",
-						Value: "test, example",
+						Value: "example, test",
 					},
 				},
 			},

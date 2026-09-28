@@ -1,20 +1,26 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
-	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/embano1/memlog"
-
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/outputs"
+	otlpmetrics "github.com/falcosecurity/falcosidekick/outputs/otlp_metrics"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -26,12 +32,16 @@ var (
 	rocketchatClient    *outputs.Client
 	mattermostClient    *outputs.Client
 	teamsClient         *outputs.Client
+	webexClient         *outputs.Client
 	datadogClient       *outputs.Client
+	datadogLogsClient   *outputs.Client
 	discordClient       *outputs.Client
-	alertmanagerClient  *outputs.Client
+	alertmanagerClients []*outputs.Client
 	elasticsearchClient *outputs.Client
+	quickwitClient      *outputs.Client
 	influxdbClient      *outputs.Client
 	lokiClient          *outputs.Client
+	sumologicClient     *outputs.Client
 	natsClient          *outputs.Client
 	stanClient          *outputs.Client
 	awsClient           *outputs.Client
@@ -56,6 +66,7 @@ var (
 	wavefrontClient     *outputs.Client
 	fissionClient       *outputs.Client
 	grafanaClient       *outputs.Client
+	grafanaOnCallClient *outputs.Client
 	yandexClient        *outputs.Client
 	syslogClient        *outputs.Client
 	mqttClient          *outputs.Client
@@ -64,16 +75,32 @@ var (
 	spyderbatClient     *outputs.Client
 	timescaleDBClient   *outputs.Client
 	redisClient         *outputs.Client
+	telegramClient      *outputs.Client
+	n8nClient           *outputs.Client
+	openObserveClient   *outputs.Client
+	dynatraceClient     *outputs.Client
+	otlpTracesClient    *outputs.Client
+	otlpLogsClient      *outputs.Client
+	talonClient         *outputs.Client
+	logstashClient      *outputs.Client
+	splunkClient        *outputs.Client
 
 	statsdClient, dogstatsdClient *statsd.Client
 	config                        *types.Configuration
 	stats                         *types.Statistics
 	promStats                     *types.PromStatistics
+	otlpMetrics                   *otlpmetrics.OTLPMetrics
+	initClientArgs                *types.InitClientArgs
 
-	regPromLabels *regexp.Regexp
+	regPromLabels            *regexp.Regexp
+	regOTLPMetricsAttributes *regexp.Regexp
+	regOutputFormat          *regexp.Regexp
+	shutDownFuncs            []func()
 )
 
 func init() {
+	utils.Log(utils.InfoLvl, "", fmt.Sprintf("Falcosidekick version: %s", GetVersionInfo().GitVersion))
+
 	// detect unit testing and skip init.
 	// see: https://github.com/alecthomas/kingpin/issues/187
 	testing := (strings.HasSuffix(os.Args[0], ".test") ||
@@ -83,18 +110,31 @@ func init() {
 	}
 
 	regPromLabels, _ = regexp.Compile("^[a-zA-Z_:][a-zA-Z0-9_:]*$")
+	// TODO: replace the following regex if something more appropriate is found
+	regOTLPMetricsAttributes = regexp.MustCompile("^[a-zA-Z_:][a-zA-Z0-9_:]*$")
+	regOutputFormat, _ = regexp.Compile(`(?i)[0-9:]+\.[0-9]+: (Debug|Informational|Notice|Warning|Error|Critical|Alert|Emergency) .*`)
 
 	config = getConfig()
 	stats = getInitStats()
 	promStats = getInitPromStats(config)
+	otlpMetrics = newOTLPMetrics(config)
 
 	nullClient = &outputs.Client{
 		OutputType:      "null",
 		Config:          config,
 		Stats:           stats,
 		PromStats:       promStats,
+		OTLPMetrics:     otlpMetrics,
 		StatsdClient:    statsdClient,
 		DogstatsdClient: dogstatsdClient,
+	}
+
+	initClientArgs = &types.InitClientArgs{
+		Config:          config,
+		Stats:           stats,
+		DogstatsdClient: dogstatsdClient,
+		PromStats:       promStats,
+		OTLPMetrics:     otlpMetrics,
 	}
 
 	if config.Statsd.Forwarder != "" {
@@ -112,7 +152,7 @@ func init() {
 		var err error
 		dogstatsdClient, err = outputs.NewStatsdClient("DogStatsD", config, stats)
 		if err != nil {
-			config.Statsd.Forwarder = ""
+			config.Dogstatsd.Forwarder = ""
 		} else {
 			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "DogStatsD")
 			nullClient.DogstatsdClient = dogstatsdClient
@@ -121,7 +161,7 @@ func init() {
 
 	if config.Slack.WebhookURL != "" {
 		var err error
-		slackClient, err = outputs.NewClient("Slack", config.Slack.WebhookURL, config.Slack.MutualTLS, config.Slack.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		slackClient, err = outputs.NewClient("Slack", config.Slack.WebhookURL, config.Slack.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Slack.WebhookURL = ""
 		} else {
@@ -131,7 +171,7 @@ func init() {
 
 	if config.Cliq.WebhookURL != "" {
 		var err error
-		cliqClient, err = outputs.NewClient("Cliq", config.Cliq.WebhookURL, config.Cliq.MutualTLS, config.Cliq.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		cliqClient, err = outputs.NewClient("Cliq", config.Cliq.WebhookURL, config.Cliq.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Cliq.WebhookURL = ""
 		} else {
@@ -141,7 +181,7 @@ func init() {
 
 	if config.Rocketchat.WebhookURL != "" {
 		var err error
-		rocketchatClient, err = outputs.NewClient("Rocketchat", config.Rocketchat.WebhookURL, config.Rocketchat.MutualTLS, config.Rocketchat.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		rocketchatClient, err = outputs.NewClient("Rocketchat", config.Rocketchat.WebhookURL, config.Rocketchat.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Rocketchat.WebhookURL = ""
 		} else {
@@ -151,7 +191,7 @@ func init() {
 
 	if config.Mattermost.WebhookURL != "" {
 		var err error
-		mattermostClient, err = outputs.NewClient("Mattermost", config.Mattermost.WebhookURL, config.Mattermost.MutualTLS, config.Mattermost.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		mattermostClient, err = outputs.NewClient("Mattermost", config.Mattermost.WebhookURL, config.Mattermost.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Mattermost.WebhookURL = ""
 		} else {
@@ -161,7 +201,7 @@ func init() {
 
 	if config.Teams.WebhookURL != "" {
 		var err error
-		teamsClient, err = outputs.NewClient("Teams", config.Teams.WebhookURL, config.Teams.MutualTLS, config.Teams.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		teamsClient, err = outputs.NewClient("Teams", config.Teams.WebhookURL, config.Teams.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Teams.WebhookURL = ""
 		} else {
@@ -169,9 +209,20 @@ func init() {
 		}
 	}
 
+	if config.Webex.WebhookURL != "" {
+		var err error
+		webexClient, err = outputs.NewClient("Webex", config.Webex.WebhookURL, config.Webex.CommonConfig, *initClientArgs)
+		if err != nil {
+			config.Webex.WebhookURL = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "Webex")
+		}
+	}
+
 	if config.Datadog.APIKey != "" {
 		var err error
-		datadogClient, err = outputs.NewClient("Datadog", config.Datadog.Host+outputs.DatadogPath+"?api_key="+config.Datadog.APIKey, config.Datadog.MutualTLS, config.Datadog.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		endpointUrl := fmt.Sprintf("%s?api_key=%s", config.Datadog.Host+outputs.DatadogPath, config.Datadog.APIKey)
+		datadogClient, err = outputs.NewClient("Datadog", endpointUrl, config.Datadog.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Datadog.APIKey = ""
 		} else {
@@ -179,9 +230,20 @@ func init() {
 		}
 	}
 
+	if config.DatadogLogs.APIKey != "" {
+		var err error
+		endpointUrl := config.DatadogLogs.Host + outputs.DatadogLogsPath
+		datadogLogsClient, err = outputs.NewClient("DatadogLogs", endpointUrl, config.DatadogLogs.CommonConfig, *initClientArgs)
+		if err != nil {
+			config.DatadogLogs.APIKey = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "DatadogLogs")
+		}
+	}
+
 	if config.Discord.WebhookURL != "" {
 		var err error
-		discordClient, err = outputs.NewClient("Discord", config.Discord.WebhookURL, config.Discord.MutualTLS, config.Discord.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		discordClient, err = outputs.NewClient("Discord", config.Discord.WebhookURL, config.Discord.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Discord.WebhookURL = ""
 		} else {
@@ -189,11 +251,11 @@ func init() {
 		}
 	}
 
-	if config.Alertmanager.HostPort != "" {
+	if len(config.Alertmanager.HostPort) != 0 {
 		var err error
-		alertmanagerClient, err = outputs.NewClient("AlertManager", config.Alertmanager.HostPort+config.Alertmanager.Endpoint, config.Alertmanager.MutualTLS, config.Alertmanager.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		alertmanagerClients, err = outputs.NewAlertManagerClient(config.Alertmanager.HostPort, config.Alertmanager.Endpoint, config.Alertmanager.CommonConfig, *initClientArgs)
 		if err != nil {
-			config.Alertmanager.HostPort = ""
+			config.Alertmanager.HostPort = []string{}
 		} else {
 			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "AlertManager")
 		}
@@ -201,17 +263,42 @@ func init() {
 
 	if config.Elasticsearch.HostPort != "" {
 		var err error
-		elasticsearchClient, err = outputs.NewClient("Elasticsearch", config.Elasticsearch.HostPort+"/"+config.Elasticsearch.Index+"/"+config.Elasticsearch.Type, config.Elasticsearch.MutualTLS, config.Elasticsearch.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		elasticsearchClient, err = outputs.NewElasticsearchClient(*initClientArgs)
 		if err != nil {
 			config.Elasticsearch.HostPort = ""
 		} else {
+			if config.Elasticsearch.CreateIndexTemplate {
+				elasticsearchClient.EndpointURL, _ = url.Parse(fmt.Sprintf("%s/_index_template/falco", config.Elasticsearch.HostPort))
+				err = elasticsearchClient.ElasticsearchCreateIndexTemplate(config.Elasticsearch)
+			}
+		}
+		if err != nil {
+			config.Elasticsearch.HostPort = ""
+		} else {
+
 			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "Elasticsearch")
+		}
+	}
+
+	if config.Quickwit.HostPort != "" {
+		var err error
+
+		endpointUrl := fmt.Sprintf("%s/%s/%s/ingest", config.Quickwit.HostPort, config.Quickwit.ApiEndpoint, config.Quickwit.Index)
+		quickwitClient, err = outputs.NewClient("Quickwit", endpointUrl, config.Quickwit.CommonConfig, *initClientArgs)
+		if err == nil && config.Quickwit.AutoCreateIndex {
+			err = quickwitClient.AutoCreateQuickwitIndex(*initClientArgs)
+		}
+
+		if err != nil {
+			config.Quickwit.HostPort = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "Quickwit")
 		}
 	}
 
 	if config.Loki.HostPort != "" {
 		var err error
-		lokiClient, err = outputs.NewClient("Loki", config.Loki.HostPort+config.Loki.Endpoint, config.Loki.MutualTLS, config.Loki.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		lokiClient, err = outputs.NewClient("Loki", config.Loki.HostPort+config.Loki.Endpoint, config.Loki.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Loki.HostPort = ""
 		} else {
@@ -219,9 +306,19 @@ func init() {
 		}
 	}
 
+	if config.SumoLogic.ReceiverURL != "" {
+		var err error
+		sumologicClient, err = outputs.NewClient("SumoLogic", config.SumoLogic.ReceiverURL, config.SumoLogic.CommonConfig, *initClientArgs)
+		if err != nil {
+			config.SumoLogic.ReceiverURL = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "SumoLogic")
+		}
+	}
+
 	if config.Nats.HostPort != "" {
 		var err error
-		natsClient, err = outputs.NewClient("NATS", config.Nats.HostPort, config.Nats.MutualTLS, config.Nats.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		natsClient, err = outputs.NewClient("NATS", config.Nats.HostPort, config.Nats.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Nats.HostPort = ""
 		} else {
@@ -231,7 +328,7 @@ func init() {
 
 	if config.Stan.HostPort != "" && config.Stan.ClusterID != "" && config.Stan.ClientID != "" {
 		var err error
-		stanClient, err = outputs.NewClient("STAN", config.Stan.HostPort, config.Stan.MutualTLS, config.Stan.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		stanClient, err = outputs.NewClient("STAN", config.Stan.HostPort, config.Stan.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Stan.HostPort = ""
 			config.Stan.ClusterID = ""
@@ -256,7 +353,7 @@ func init() {
 		}
 
 		var err error
-		influxdbClient, err = outputs.NewClient("Influxdb", url, config.Influxdb.MutualTLS, config.Influxdb.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		influxdbClient, err = outputs.NewClient("Influxdb", url, config.Influxdb.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Influxdb.HostPort = ""
 		} else {
@@ -268,7 +365,7 @@ func init() {
 		config.AWS.SNS.TopicArn != "" || config.AWS.CloudWatchLogs.LogGroup != "" || config.AWS.S3.Bucket != "" ||
 		config.AWS.Kinesis.StreamName != "" || (config.AWS.SecurityLake.Bucket != "" && config.AWS.SecurityLake.Region != "" && config.AWS.SecurityLake.AccountID != "") {
 		var err error
-		awsClient, err = outputs.NewAWSClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		awsClient, err = outputs.NewAWSClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.AWS.AccessKeyID = ""
 			config.AWS.SecretAccessKey = ""
@@ -324,7 +421,7 @@ func init() {
 
 	if config.SMTP.HostPort != "" && config.SMTP.From != "" && config.SMTP.To != "" {
 		var err error
-		smtpClient, err = outputs.NewSMTPClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		smtpClient, err = outputs.NewSMTPClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.SMTP.HostPort = ""
 		} else {
@@ -338,7 +435,7 @@ func init() {
 		if strings.ToLower(config.Opsgenie.Region) == "eu" {
 			url = "https://api.eu.opsgenie.com/v2/alerts"
 		}
-		opsgenieClient, err = outputs.NewClient("Opsgenie", url, config.Opsgenie.MutualTLS, config.Opsgenie.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		opsgenieClient, err = outputs.NewClient("Opsgenie", url, config.Opsgenie.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Opsgenie.APIKey = ""
 		} else {
@@ -348,7 +445,7 @@ func init() {
 
 	if config.Webhook.Address != "" {
 		var err error
-		webhookClient, err = outputs.NewClient("Webhook", config.Webhook.Address, config.Webhook.MutualTLS, config.Webhook.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		webhookClient, err = outputs.NewClient("Webhook", config.Webhook.Address, config.Webhook.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Webhook.Address = ""
 		} else {
@@ -358,7 +455,7 @@ func init() {
 
 	if config.NodeRed.Address != "" {
 		var err error
-		noderedClient, err = outputs.NewClient("NodeRed", config.NodeRed.Address, false, config.NodeRed.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		noderedClient, err = outputs.NewClient("NodeRed", config.NodeRed.Address, config.NodeRed.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.NodeRed.Address = ""
 		} else {
@@ -368,7 +465,7 @@ func init() {
 
 	if config.CloudEvents.Address != "" {
 		var err error
-		cloudeventsClient, err = outputs.NewClient("CloudEvents", config.CloudEvents.Address, config.CloudEvents.MutualTLS, config.CloudEvents.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		cloudeventsClient, err = outputs.NewClient("CloudEvents", config.CloudEvents.Address, config.CloudEvents.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.CloudEvents.Address = ""
 		} else {
@@ -378,7 +475,7 @@ func init() {
 
 	if config.Azure.EventHub.Name != "" {
 		var err error
-		azureClient, err = outputs.NewEventHubClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		azureClient, err = outputs.NewEventHubClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.Azure.EventHub.Name = ""
 			config.Azure.EventHub.Namespace = ""
@@ -389,14 +486,16 @@ func init() {
 		}
 	}
 
-	if (config.GCP.PubSub.ProjectID != "" && config.GCP.PubSub.Topic != "") || config.GCP.Storage.Bucket != "" || config.GCP.CloudFunctions.Name != "" {
+	if (config.GCP.PubSub.ProjectID != "" && config.GCP.PubSub.Topic != "") || config.GCP.Storage.Bucket != "" || config.GCP.CloudFunctions.Name != "" || (config.GCP.Chronicle.ProjectID != "" && config.GCP.Chronicle.InstanceID != "" && config.GCP.Chronicle.Region != "") {
 		var err error
-		gcpClient, err = outputs.NewGCPClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		gcpClient, err = outputs.NewGCPClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.GCP.PubSub.ProjectID = ""
 			config.GCP.PubSub.Topic = ""
 			config.GCP.Storage.Bucket = ""
 			config.GCP.CloudFunctions.Name = ""
+			config.GCP.Chronicle.ProjectID = ""
+			config.GCP.Chronicle.InstanceID = ""
 		} else {
 			if config.GCP.PubSub.Topic != "" && config.GCP.PubSub.ProjectID != "" {
 				outputs.EnabledOutputs = append(outputs.EnabledOutputs, "GCPPubSub")
@@ -407,6 +506,9 @@ func init() {
 			if config.GCP.CloudFunctions.Name != "" {
 				outputs.EnabledOutputs = append(outputs.EnabledOutputs, "GCPCloudFunctions")
 			}
+			if config.GCP.Chronicle.ProjectID != "" && config.GCP.Chronicle.InstanceID != "" && config.GCP.Chronicle.Region != "" {
+				outputs.EnabledOutputs = append(outputs.EnabledOutputs, "GCPChronicle")
+			}
 		}
 	}
 
@@ -414,7 +516,7 @@ func init() {
 		var err error
 		var outputName = "GCPCloudRun"
 
-		gcpCloudRunClient, err = outputs.NewClient(outputName, config.GCP.CloudRun.Endpoint, false, false, config, stats, promStats, statsdClient, dogstatsdClient)
+		gcpCloudRunClient, err = outputs.NewClient(outputName, config.GCP.CloudRun.Endpoint, types.CommonConfig{}, *initClientArgs)
 
 		if err != nil {
 			config.GCP.CloudRun.Endpoint = ""
@@ -425,17 +527,17 @@ func init() {
 
 	if config.Googlechat.WebhookURL != "" {
 		var err error
-		googleChatClient, err = outputs.NewClient("Googlechat", config.Googlechat.WebhookURL, config.Googlechat.MutualTLS, config.Googlechat.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		googleChatClient, err = outputs.NewClient("Googlechat", config.Googlechat.WebhookURL, config.Googlechat.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Googlechat.WebhookURL = ""
 		} else {
-			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "Google Chat")
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "GoogleChat")
 		}
 	}
 
 	if config.Kafka.HostPort != "" && config.Kafka.Topic != "" {
 		var err error
-		kafkaClient, err = outputs.NewKafkaClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		kafkaClient, err = outputs.NewKafkaClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.Kafka.HostPort = ""
 		} else {
@@ -445,7 +547,7 @@ func init() {
 
 	if config.KafkaRest.Address != "" {
 		var err error
-		kafkaRestClient, err = outputs.NewClient("KafkaRest", config.KafkaRest.Address, config.KafkaRest.MutualTLS, config.KafkaRest.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		kafkaRestClient, err = outputs.NewClient("KafkaRest", config.KafkaRest.Address, config.KafkaRest.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.KafkaRest.Address = ""
 		} else {
@@ -458,7 +560,7 @@ func init() {
 		var url = "https://events.pagerduty.com/v2/enqueue"
 		var outputName = "Pagerduty"
 
-		pagerdutyClient, err = outputs.NewClient(outputName, url, config.Pagerduty.MutualTLS, config.Pagerduty.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		pagerdutyClient, err = outputs.NewClient(outputName, url, config.Pagerduty.CommonConfig, *initClientArgs)
 
 		if err != nil {
 			config.Pagerduty.RoutingKey = ""
@@ -469,9 +571,9 @@ func init() {
 
 	if config.Kubeless.Namespace != "" && config.Kubeless.Function != "" {
 		var err error
-		kubelessClient, err = outputs.NewKubelessClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		kubelessClient, err = outputs.NewKubelessClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
-			log.Printf("[ERROR] : Kubeless - %v\n", err)
+			utils.Log(utils.ErrorLvl, kubelessClient.OutputType, err.Error())
 			config.Kubeless.Namespace = ""
 			config.Kubeless.Function = ""
 		} else {
@@ -481,7 +583,7 @@ func init() {
 
 	if config.WebUI.URL != "" {
 		var err error
-		webUIClient, err = outputs.NewClient("WebUI", config.WebUI.URL, config.WebUI.MutualTLS, config.WebUI.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		webUIClient, err = outputs.NewClient("WebUI", config.WebUI.URL, config.WebUI.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.WebUI.URL = ""
 		} else {
@@ -491,7 +593,7 @@ func init() {
 
 	if config.PolicyReport.Enabled {
 		var err error
-		policyReportClient, err = outputs.NewPolicyReportClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		policyReportClient, err = outputs.NewPolicyReportClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.PolicyReport.Enabled = false
 		} else {
@@ -501,9 +603,9 @@ func init() {
 
 	if config.Openfaas.FunctionName != "" {
 		var err error
-		openfaasClient, err = outputs.NewOpenfaasClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		openfaasClient, err = outputs.NewOpenfaasClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
-			log.Printf("[ERROR] : OpenFaaS - %v\n", err)
+			utils.Log(utils.ErrorLvl, openfaasClient.OutputType, err.Error())
 		} else {
 			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "OpenFaaS")
 		}
@@ -511,9 +613,9 @@ func init() {
 
 	if config.Tekton.EventListener != "" {
 		var err error
-		tektonClient, err = outputs.NewClient("Tekton", config.Tekton.EventListener, false, config.Tekton.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		tektonClient, err = outputs.NewClient("Tekton", config.Tekton.EventListener, config.Tekton.CommonConfig, *initClientArgs)
 		if err != nil {
-			log.Printf("[ERROR] : Tekton - %v\n", err)
+			utils.Log(utils.ErrorLvl, tektonClient.OutputType, err.Error())
 		} else {
 			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "Tekton")
 		}
@@ -521,7 +623,7 @@ func init() {
 
 	if config.Rabbitmq.URL != "" && config.Rabbitmq.Queue != "" {
 		var err error
-		rabbitmqClient, err = outputs.NewRabbitmqClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		rabbitmqClient, err = outputs.NewRabbitmqClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.Rabbitmq.URL = ""
 		} else {
@@ -531,9 +633,9 @@ func init() {
 
 	if config.Wavefront.EndpointType != "" && config.Wavefront.EndpointHost != "" {
 		var err error
-		wavefrontClient, err = outputs.NewWavefrontClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		wavefrontClient, err = outputs.NewWavefrontClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
-			log.Printf("[ERROR] : Wavefront - %v\n", err)
+			utils.Log(utils.ErrorLvl, wavefrontClient.OutputType, err.Error())
 			config.Wavefront.EndpointHost = ""
 		} else {
 			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "Wavefront")
@@ -542,9 +644,9 @@ func init() {
 
 	if config.Fission.Function != "" {
 		var err error
-		fissionClient, err = outputs.NewFissionClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		fissionClient, err = outputs.NewFissionClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
-			log.Printf("[ERROR] : Fission - %v\n", err)
+			utils.Log(utils.ErrorLvl, fissionClient.OutputType, err.Error())
 		} else {
 			outputs.EnabledOutputs = append(outputs.EnabledOutputs, outputs.Fission)
 		}
@@ -553,7 +655,8 @@ func init() {
 	if config.Grafana.HostPort != "" && config.Grafana.APIKey != "" {
 		var err error
 		var outputName = "Grafana"
-		grafanaClient, err = outputs.NewClient(outputName, config.Grafana.HostPort+"/api/annotations", config.Grafana.MutualTLS, config.Grafana.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		endpointUrl := fmt.Sprintf("%s/api/annotations", config.Grafana.HostPort)
+		grafanaClient, err = outputs.NewClient(outputName, endpointUrl, config.Grafana.CommonConfig, *initClientArgs)
 		if err != nil {
 			config.Grafana.HostPort = ""
 			config.Grafana.APIKey = ""
@@ -562,12 +665,23 @@ func init() {
 		}
 	}
 
+	if config.GrafanaOnCall.WebhookURL != "" {
+		var err error
+		var outputName = "GrafanaOnCall"
+		grafanaOnCallClient, err = outputs.NewClient(outputName, config.GrafanaOnCall.WebhookURL, config.GrafanaOnCall.CommonConfig, *initClientArgs)
+		if err != nil {
+			config.GrafanaOnCall.WebhookURL = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, outputName)
+		}
+	}
+
 	if config.Yandex.S3.Bucket != "" {
 		var err error
-		yandexClient, err = outputs.NewYandexClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		yandexClient, err = outputs.NewYandexClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.Yandex.S3.Bucket = ""
-			log.Printf("[ERROR] : Yandex - %v\n", err)
+			utils.Log(utils.ErrorLvl, yandexClient.OutputType, err.Error())
 		} else {
 			if config.Yandex.S3.Bucket != "" {
 				outputs.EnabledOutputs = append(outputs.EnabledOutputs, "YandexS3")
@@ -577,10 +691,10 @@ func init() {
 
 	if config.Yandex.DataStreams.StreamName != "" {
 		var err error
-		yandexClient, err = outputs.NewYandexClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		yandexClient, err = outputs.NewYandexClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.Yandex.DataStreams.StreamName = ""
-			log.Printf("[ERROR] : Yandex - %v\n", err)
+			utils.Log(utils.ErrorLvl, yandexClient.OutputType, err.Error())
 		} else {
 			if config.Yandex.DataStreams.StreamName != "" {
 				outputs.EnabledOutputs = append(outputs.EnabledOutputs, "YandexDataStreams")
@@ -590,10 +704,10 @@ func init() {
 
 	if config.Syslog.Host != "" {
 		var err error
-		syslogClient, err = outputs.NewSyslogClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		syslogClient, err = outputs.NewSyslogClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.Syslog.Host = ""
-			log.Printf("[ERROR] : Syslog - %v\n", err)
+			utils.Log(utils.ErrorLvl, syslogClient.OutputType, err.Error())
 		} else {
 			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "Syslog")
 		}
@@ -601,10 +715,10 @@ func init() {
 
 	if config.MQTT.Broker != "" {
 		var err error
-		mqttClient, err = outputs.NewMQTTClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		mqttClient, err = outputs.NewMQTTClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.MQTT.Broker = ""
-			log.Printf("[ERROR] : MQTT - %v\n", err)
+			utils.Log(utils.ErrorLvl, mqttClient.OutputType, err.Error())
 		} else {
 			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "MQTT")
 		}
@@ -612,7 +726,8 @@ func init() {
 
 	if config.Zincsearch.HostPort != "" {
 		var err error
-		zincsearchClient, err = outputs.NewClient("Zincsearch", config.Zincsearch.HostPort+"/api/"+config.Zincsearch.Index+"/_doc", false, config.Zincsearch.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		endpointUrl := fmt.Sprintf("%s/api/%s/_doc", config.Zincsearch.HostPort, config.Zincsearch.Index)
+		zincsearchClient, err = outputs.NewClient("Zincsearch", endpointUrl, types.CommonConfig{CheckCert: config.Zincsearch.CheckCert}, *initClientArgs)
 		if err != nil {
 			config.Zincsearch.HostPort = ""
 		} else {
@@ -622,7 +737,8 @@ func init() {
 
 	if config.Gotify.HostPort != "" {
 		var err error
-		gotifyClient, err = outputs.NewClient("Gotify", config.Gotify.HostPort+"/message", false, config.Gotify.CheckCert, config, stats, promStats, statsdClient, dogstatsdClient)
+		endpointUrl := fmt.Sprintf("%s/message", config.Gotify.HostPort)
+		gotifyClient, err = outputs.NewClient("Gotify", endpointUrl, types.CommonConfig{CheckCert: config.Gotify.CheckCert}, *initClientArgs)
 		if err != nil {
 			config.Gotify.HostPort = ""
 		} else {
@@ -632,10 +748,10 @@ func init() {
 
 	if config.Spyderbat.OrgUID != "" {
 		var err error
-		spyderbatClient, err = outputs.NewSpyderbatClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		spyderbatClient, err = outputs.NewSpyderbatClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.Spyderbat.OrgUID = ""
-			log.Printf("[ERROR] : Spyderbat - %v\n", err)
+			utils.Log(utils.ErrorLvl, spyderbatClient.OutputType, err.Error())
 		} else {
 			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "Spyderbat")
 		}
@@ -643,10 +759,10 @@ func init() {
 
 	if config.TimescaleDB.Host != "" {
 		var err error
-		timescaleDBClient, err = outputs.NewTimescaleDBClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		timescaleDBClient, err = outputs.NewTimescaleDBClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.TimescaleDB.Host = ""
-			log.Printf("[ERROR] : TimescaleDB - %v\n", err)
+			utils.Log(utils.ErrorLvl, timescaleDBClient.OutputType, err.Error())
 		} else {
 			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "TimescaleDB")
 		}
@@ -654,7 +770,7 @@ func init() {
 
 	if config.Redis.Address != "" {
 		var err error
-		redisClient, err = outputs.NewRedisClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		redisClient, err = outputs.NewRedisClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
 		if err != nil {
 			config.Redis.Address = ""
 		} else {
@@ -662,24 +778,253 @@ func init() {
 		}
 	}
 
-	log.Printf("[INFO]  : Falco Sidekick version: %s\n", GetVersionInfo().GitVersion)
-	log.Printf("[INFO]  : Enabled Outputs : %s\n", outputs.EnabledOutputs)
+	if config.Logstash.Address != "" {
+		var err error
+		logstashClient, err = outputs.NewLogstashClient(config, stats, promStats, statsdClient, dogstatsdClient)
+		if err != nil {
+			config.Logstash.Address = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "Logstash")
+		}
+	}
 
+	if config.Telegram.ChatID != "" && config.Telegram.Token != "" {
+		var err error
+		var urlFormat = "%s/bot%s/sendMessage"
+
+		telegramClient, err = outputs.NewClient("Telegram", fmt.Sprintf(urlFormat, config.Telegram.Host, config.Telegram.Token), types.CommonConfig{CheckCert: config.Telegram.CheckCert}, *initClientArgs)
+
+		if err != nil {
+			config.Telegram.ChatID = ""
+			config.Telegram.Token = ""
+
+			utils.Log(utils.ErrorLvl, telegramClient.OutputType, err.Error())
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "Telegram")
+		}
+	}
+
+	if config.N8N.Address != "" {
+		var err error
+		n8nClient, err = outputs.NewClient("n8n", config.N8N.Address, types.CommonConfig{CheckCert: config.N8N.CheckCert}, *initClientArgs)
+		if err != nil {
+			config.N8N.Address = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "n8n")
+		}
+	}
+
+	if config.OpenObserve.HostPort != "" {
+		var err error
+		endpointUrl := fmt.Sprintf("%s/api/%s/%s/_multi", config.OpenObserve.HostPort, config.OpenObserve.OrganizationName, config.OpenObserve.StreamName)
+		openObserveClient, err = outputs.NewClient("OpenObserve", endpointUrl, config.OpenObserve.CommonConfig, *initClientArgs)
+		if err != nil {
+			config.OpenObserve.HostPort = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "OpenObserve")
+		}
+	}
+
+	if config.Dynatrace.APIToken != "" && config.Dynatrace.APIUrl != "" {
+		var err error
+		dynatraceApiUrl := strings.TrimRight(config.Dynatrace.APIUrl, "/") + "/v2/logs/ingest"
+		dynatraceClient, err = outputs.NewClient("Dynatrace", dynatraceApiUrl, types.CommonConfig{CheckCert: config.Dynatrace.CheckCert}, *initClientArgs)
+		if err != nil {
+			config.Dynatrace.APIToken = ""
+			config.Dynatrace.APIUrl = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "Dynatrace")
+		}
+	}
+
+	if config.OTLP.Traces.Endpoint != "" {
+		var err error
+		otlpTracesClient, err = outputs.NewOtlpTracesClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
+		if err != nil {
+			config.OTLP.Traces.Endpoint = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "OTLPTraces")
+			shutDownFuncs = append(shutDownFuncs, otlpTracesClient.ShutDownFunc)
+		}
+	}
+
+	if config.OTLP.Logs.Endpoint != "" {
+		var err error
+		otlpLogsClient, err = outputs.NewOtlpLogsClient(config, stats, promStats, otlpMetrics, statsdClient, dogstatsdClient)
+		if err != nil {
+			config.OTLP.Logs.Endpoint = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "OTLPLogs")
+			shutDownFuncs = append(shutDownFuncs, otlpLogsClient.ShutDownFunc)
+		}
+	}
+
+	if config.OTLP.Metrics.Endpoint != "" {
+		shutDownFunc, err := otlpmetrics.InitProvider(context.Background(), &config.OTLP.Metrics)
+		if err != nil {
+			fmt.Println(err)
+			config.OTLP.Metrics.Endpoint = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "OTLPMetrics")
+			fn := func() {
+				if err := shutDownFunc(context.TODO()); err != nil {
+					utils.Log(utils.ErrorLvl, "OTLP Metrics", err.Error())
+				}
+			}
+			shutDownFuncs = append(shutDownFuncs, fn)
+		}
+	}
+
+	if config.Talon.Address != "" {
+		var err error
+		talonClient, err = outputs.NewClient("Talon", config.Talon.Address, types.CommonConfig{CheckCert: config.Talon.CheckCert}, *initClientArgs)
+		if err != nil {
+			config.Talon.Address = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "Talon")
+		}
+	}
+
+	if config.Splunk.Host != "" {
+		var err error
+		splunkClient, err = outputs.NewClient("Splunk", config.Splunk.Host, types.CommonConfig{CheckCert: config.Splunk.CheckCert}, *initClientArgs)
+		if err != nil {
+			config.Splunk.Host = ""
+		} else {
+			outputs.EnabledOutputs = append(outputs.EnabledOutputs, "Splunk")
+		}
+	}
+
+	utils.Log(utils.InfoLvl, "", fmt.Sprintf("Enabled Outputs: %s", outputs.EnabledOutputs))
 }
 
 func main() {
-	http.HandleFunc("/", mainHandler)
-	http.HandleFunc("/ping", pingHandler)
-	http.HandleFunc("/healthz", healthHandler)
-	http.HandleFunc("/test", testHandler)
-	http.Handle("/metrics", promhttp.Handler())
-
-	log.Printf("[INFO]  : Falco Sidekick is up and listening on %s:%d", config.ListenAddress, config.ListenPort)
+	for _, shutdown := range shutDownFuncs {
+		defer shutdown()
+	}
 	if config.Debug {
-		log.Printf("[INFO]  : Debug mode : %v", config.Debug)
+		utils.Log(utils.InfoPrefix, "", fmt.Sprintf("Debug mode: %v", config.Debug))
 	}
 
-	if err := http.ListenAndServe(fmt.Sprintf("%s:%d", config.ListenAddress, config.ListenPort), nil); err != nil {
-		log.Fatalf("[ERROR] : %v", err.Error())
+	routes := map[string]http.Handler{
+		"/":        http.HandlerFunc(mainHandler),
+		"/ping":    http.HandlerFunc(pingHandler),
+		"/healthz": http.HandlerFunc(healthHandler),
+		"/test":    http.HandlerFunc(testHandler),
+		"/metrics": promhttp.Handler(),
 	}
+
+	mainServeMux := http.NewServeMux()
+	var HTTPServeMux *http.ServeMux
+
+	// configure HTTP routes requested by NoTLSPath config
+	if config.TLSServer.Deploy {
+		HTTPServeMux = http.NewServeMux()
+		for _, r := range config.TLSServer.NoTLSPaths {
+			handler, ok := routes[r]
+			if ok {
+				delete(routes, r)
+				if config.Debug {
+					utils.Log(utils.DebugLvl, "", fmt.Sprintf("%s is served on http", r))
+				}
+				HTTPServeMux.Handle(r, handler)
+			} else {
+				utils.Log(utils.WarningLvl, "", fmt.Sprintf("tlsserver.notlspaths has unknown path '%s'", r))
+			}
+		}
+	}
+
+	// configure main server routes
+	for r, handler := range routes {
+		mainServeMux.Handle(r, handler)
+	}
+
+	server := &http.Server{
+		Addr:    fmt.Sprintf("%s:%d", config.ListenAddress, config.ListenPort),
+		Handler: mainServeMux,
+		// Timeouts
+		ReadTimeout:       60 * time.Second,
+		ReadHeaderTimeout: 60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	if config.TLSServer.Deploy {
+		if config.TLSServer.MutualTLS {
+			if config.Debug {
+				utils.Log(utils.DebugLvl, "", "running mTLS server")
+			}
+
+			caCert, err := os.ReadFile(config.TLSServer.CaCertFile)
+			if err != nil {
+				utils.Log(utils.ErrorLvl, "", err.Error())
+			}
+			caCertPool := x509.NewCertPool()
+			caCertPool.AppendCertsFromPEM(caCert)
+
+			server.TLSConfig = &tls.Config{
+				ClientAuth: tls.RequireAndVerifyClientCert,
+				RootCAs:    caCertPool,
+				ClientCAs:  caCertPool,
+				MinVersion: tls.VersionTLS12,
+			}
+		}
+
+		if config.Debug && !config.TLSServer.MutualTLS {
+			utils.Log(utils.DebugLvl, "", "running TLS server")
+		}
+
+		if len(config.TLSServer.NoTLSPaths) == 0 {
+			utils.Log(utils.WarningLvl, "", "tlsserver.deploy is true but tlsserver.notlspaths is empty, change tlsserver.deploy to true to deploy two servers, at least for /ping endpoint")
+		}
+
+		if len(config.TLSServer.NoTLSPaths) != 0 {
+			if config.Debug {
+				utils.Log(utils.DebugLvl, "", "running HTTP server for endpoints defined in tlsserver.notlspaths")
+			}
+
+			httpServer := &http.Server{
+				Addr:    fmt.Sprintf("%s:%d", config.ListenAddress, config.TLSServer.NoTLSPort),
+				Handler: HTTPServeMux,
+				// Timeouts
+				ReadTimeout:       60 * time.Second,
+				ReadHeaderTimeout: 60 * time.Second,
+				WriteTimeout:      60 * time.Second,
+				IdleTimeout:       60 * time.Second,
+			}
+			utils.Log(utils.InfoLvl, "", fmt.Sprintf("Falcosidekick is up and listening on %s:%d for TLS and %s:%d for non-TLS", config.ListenAddress, config.ListenPort, config.ListenAddress, config.TLSServer.NoTLSPort))
+
+			errs := make(chan error, 1)
+			go serveTLS(server, errs)
+			go serveHTTP(httpServer, errs)
+			err := <-errs
+			utils.Log(utils.FatalLvl, "", err.Error())
+		} else {
+			utils.Log(utils.InfoLvl, "", fmt.Sprintf("Falcosidekick is up and listening on %s:%d", config.ListenAddress, config.ListenPort))
+			if err := server.ListenAndServeTLS(config.TLSServer.CertFile, config.TLSServer.KeyFile); err != nil {
+				utils.Log(utils.FatalLvl, "", err.Error())
+			}
+		}
+	} else {
+		if config.Debug {
+			utils.Log(utils.DebugLvl, "", "running HTTP server")
+		}
+
+		if config.TLSServer.MutualTLS {
+			utils.Log(utils.WarningLvl, "", "tlsserver.deploy is false but tlsserver.mutualtls is true, change tlsserver.deploy to true to use mTLS")
+		}
+
+		utils.Log(utils.InfoLvl, "", fmt.Sprintf("Falcosidekick is up and listening on %s:%d", config.ListenAddress, config.ListenPort))
+		if err := server.ListenAndServe(); err != nil {
+			utils.Log(utils.FatalLvl, "", err.Error())
+		}
+	}
+}
+
+func serveTLS(server *http.Server, errs chan<- error) {
+	errs <- server.ListenAndServeTLS(config.TLSServer.CertFile, config.TLSServer.KeyFile)
+}
+
+func serveHTTP(server *http.Server, errs chan<- error) {
+	errs <- server.ListenAndServe()
 }

@@ -1,9 +1,14 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package outputs
 
 import (
-	"log"
+	"sort"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/falcosecurity/falcosidekick/internal/pkg/utils"
 	"github.com/falcosecurity/falcosidekick/types"
 )
 
@@ -30,13 +35,12 @@ type teamsPayload struct {
 
 func newTeamsPayload(falcopayload types.FalcoPayload, config *types.Configuration) teamsPayload {
 	var (
-		sections []teamsSection
-		section  teamsSection
-		facts    []teamsFact
-		fact     teamsFact
+		section teamsSection
+		facts   []teamsFact
+		fact    teamsFact
 	)
 
-	section.ActivityTitle = "Falco Sidekick"
+	section.ActivityTitle = "Falcosidekick"
 	section.ActivitySubTitle = falcopayload.Time.String()
 
 	if config.Teams.OutputFormat == All || config.Teams.OutputFormat == Text || config.Teams.OutputFormat == "" {
@@ -48,18 +52,6 @@ func newTeamsPayload(falcopayload types.FalcoPayload, config *types.Configuratio
 	}
 
 	if config.Teams.OutputFormat == All || config.Teams.OutputFormat == "facts" || config.Teams.OutputFormat == "" {
-		for i, j := range falcopayload.OutputFields {
-			switch v := j.(type) {
-			case string:
-				fact.Name = i
-				fact.Value = v
-			default:
-				continue
-			}
-
-			facts = append(facts, fact)
-		}
-
 		fact.Name = Rule
 		fact.Value = falcopayload.Rule
 		facts = append(facts, fact)
@@ -74,7 +66,15 @@ func newTeamsPayload(falcopayload types.FalcoPayload, config *types.Configuratio
 			fact.Value = falcopayload.Hostname
 			facts = append(facts, fact)
 		}
+
+		for _, i := range getSortedStringKeys(falcopayload.OutputFields) {
+			fact.Name = i
+			fact.Value = falcopayload.OutputFields[i].(string)
+			facts = append(facts, fact)
+		}
+
 		if len(falcopayload.Tags) != 0 {
+			sort.Strings(falcopayload.Tags)
 			fact.Name = Tags
 			fact.Value = strings.Join(falcopayload.Tags, ", ")
 			facts = append(facts, fact)
@@ -103,13 +103,11 @@ func newTeamsPayload(falcopayload types.FalcoPayload, config *types.Configuratio
 		color = "ccfff2"
 	}
 
-	sections = append(sections, section)
-
 	t := teamsPayload{
 		Type:       "MessageCard",
 		Summary:    falcopayload.Output,
 		ThemeColor: color,
-		Sections:   sections,
+		Sections:   []teamsSection{section},
 	}
 
 	return t
@@ -124,7 +122,9 @@ func (c *Client) TeamsPost(falcopayload types.FalcoPayload) {
 		go c.CountMetric(Outputs, 1, []string{"output:teams", "status:error"})
 		c.Stats.Teams.Add(Error, 1)
 		c.PromStats.Outputs.With(map[string]string{"destination": "teams", "status": Error}).Inc()
-		log.Printf("[ERROR] : Teams - %v\n", err)
+		c.OTLPMetrics.Outputs.With(attribute.String("destination", "teams"),
+			attribute.String("status", Error)).Inc()
+		utils.Log(utils.ErrorLvl, c.OutputType, err.Error())
 		return
 	}
 
@@ -132,4 +132,5 @@ func (c *Client) TeamsPost(falcopayload types.FalcoPayload) {
 	go c.CountMetric(Outputs, 1, []string{"output:teams", "status:ok"})
 	c.Stats.Teams.Add(OK, 1)
 	c.PromStats.Outputs.With(map[string]string{"destination": "teams", "status": OK}).Inc()
+	c.OTLPMetrics.Outputs.With(attribute.String("destination", "teams"), attribute.String("status", OK)).Inc()
 }
